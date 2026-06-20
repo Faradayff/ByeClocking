@@ -1,0 +1,16 @@
+{
+  "clocking_platform": "",
+  "account": "",
+  "password": "",
+  "company_name": "",
+  "clock_in": "08:00",
+  "clock_out": "17:00",
+  "unpunctuality": 10,
+  "leave_unpunctuality": 20,
+  "lunchtime": "14:00",
+  "min_time_to_lunch": 15,
+  "max_time_to_lunch": 40,
+  "lunch_unpunctuality": 60,
+  "summer_times": [],
+  "summer_period": []
+}
