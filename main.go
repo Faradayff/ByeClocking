@@ -34,10 +34,20 @@ func main() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		// TODO: implement main logic
-		// TODO: implement summer time
+	// TODO: randomize hours
 
+	for tick := range ticker.C {
+		// TODO: implement summer time
+		if tick.Hour() == cfg.ClockIn.Hour() {
+			slog.Debug("Clock in time")
+		} else if tick.Hour() == cfg.ClockOut.Hour() {
+			slog.Debug("Clock out time")
+		} else if tick.Hour() == cfg.Lunchtime.Hour() {
+			slog.Debug("Lunch time")
+		} else {
+			slog.Debug("Back from lunch time")
+		}
+		os.Exit(0)
 	}
 }
 

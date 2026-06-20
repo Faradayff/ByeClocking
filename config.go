@@ -6,24 +6,49 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 )
 
+type ClockTime struct {
+	time.Time
+}
+
+func (ct *ClockTime) UnmarshalJSON(data []byte) error {
+	value := strings.Trim(string(data), `"`)
+
+	if value == "" || value == "null" {
+		return nil
+	}
+
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return fmt.Errorf("invalid time %q, expected HH:mm: %w", value, err)
+	}
+
+	ct.Time = parsed
+	return nil
+}
+
+func (ct *ClockTime) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ct.Format("15:04"))
+}
+
 type Config struct {
-	ClockingPlatform   string      `json:"Clocking_platform"`
+	ClockingPlatform   string      `json:"clocking_platform"`
 	Account            string      `json:"account"`
 	Password           string      `json:"password"`
 	CompanyName        string      `json:"company_name"`
-	ClockIn            time.Time   `json:"clock_in"`
-	ClockOut           time.Time   `json:"clock_out"`
+	ClockIn            ClockTime   `json:"clock_in"`
+	ClockOut           ClockTime   `json:"clock_out"`
 	Unpunctuality      int         `json:"unpunctuality"`
 	LeaveUnpunctuality int         `json:"leave_unpunctuality"`
-	Lunchtime          *time.Time  `json:"lunchtime"`
+	Lunchtime          *ClockTime  `json:"lunchtime"`
 	MinTimeToLunch     int         `json:"min_time_to_lunch"`
 	MaxTimeToLunch     int         `json:"max_time_to_lunch"`
 	LunchUnpunctuality int         `json:"lunch_unpunctuality"`
-	SummerTimes        []time.Time `json:"summer_times"`
-	SummerPeriod       []time.Time `json:"summer_period"`
+	SummerTimes        []ClockTime `json:"summer_times"`
+	SummerPeriod       []string    `json:"summer_period"`
 }
 
 func LoadConfig(filePath string) (*Config, error) {
