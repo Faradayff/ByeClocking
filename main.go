@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,27 +28,46 @@ func main() {
 		os.Exit(1)
 	}
 
-	initDelays(cfg)
-
-	slog.Debug("Configuration finished")
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	// TODO: randomize hours
-
-	for tick := range ticker.C {
+	for {
 		// TODO: implement summer time
-		if tick.Hour() == cfg.ClockIn.Hour() {
-			slog.Debug("Clock in time")
-		} else if tick.Hour() == cfg.ClockOut.Hour() {
-			slog.Debug("Clock out time")
-		} else if tick.Hour() == cfg.Lunchtime.Hour() {
-			slog.Debug("Lunch time")
-		} else {
-			slog.Debug("Back from lunch time")
-		}
-		os.Exit(0)
+		slog.Info("Starting the day")
+		clockInTime, lunchTime, lunchFinishTime, clockOutTime := randomizeHours(cfg)
+
+		signalToClock := make(chan bool)
+
+		go waitingTicker(clockInTime, signalToClock)
+		slog.Debug("Waiting to clock in")
+
+		<-signalToClock
+		slog.Info("Clock in time")
+
+		// clockIn
+
+		go waitingTicker(lunchTime, signalToClock)
+		slog.Debug("Waiting to go to lunch")
+
+		<-signalToClock
+		slog.Info("Lunch time")
+
+		// clockPause
+
+		go waitingTicker(lunchFinishTime, signalToClock)
+		slog.Debug("Waiting to go back from lunch")
+
+		<-signalToClock
+		slog.Info("Back from lunch time")
+
+		// clockResume
+
+		go waitingTicker(clockOutTime, signalToClock)
+		slog.Debug("Waiting to clock out")
+
+		<-signalToClock
+		slog.Info("Clock out time")
+
+		// clockOut
+
+		waitUntilTomorrow(cfg.ClockIn.Time)
 	}
 }
 
@@ -77,4 +97,44 @@ func initLogging(loglevel string) {
 
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
+}
+
+func waitingTicker(targetHour time.Time, signal chan<- bool) {
+	timeToClock := time.Until(targetHour)
+	slog.Debug("Waiting Ticker is going to wait", "duration", timeToClock.Minutes())
+	<-time.After(timeToClock)
+	signal <- true
+}
+
+func waitUntilTomorrow(clockIn time.Time) {
+	wakeUpTime := time.Until(clockIn) - time.Hour
+	slog.Debug("Waiting until tomorrow", "duration", wakeUpTime.Minutes())
+	<-time.After(wakeUpTime)
+}
+
+func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time) {
+	slog.Info("Setting up delays and times")
+	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
+
+	clockInTime := cfg.ClockIn.Time.Add(clockInDelay * time.Minute)
+	lunchTime := cfg.Lunchtime.Time.Add(lunchDelay * time.Minute)
+	lunchFinishTime := cfg.Lunchtime.Time.Add(lunchDuration * time.Minute)
+	clockOutTime := cfg.ClockOut.Time.Add(clockOutDelay * time.Minute)
+
+	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime)
+	return clockInTime, lunchTime, lunchFinishTime, clockOutTime
+}
+
+func initDelays(cfg *Config) (clockInDelay time.Duration, lunchDelay time.Duration, lunchDuration time.Duration, clockOutDelay time.Duration) {
+	if cfg.Unpunctuality > 0 {
+		clockInDelay = time.Duration(rand.Intn(cfg.Unpunctuality))
+		clockOutDelay = time.Duration(rand.Intn(cfg.LeaveUnpunctuality)) + clockInDelay
+	}
+	if cfg.LunchUnpunctuality > 0 {
+		lunchDelay = time.Duration(rand.Intn(cfg.LunchUnpunctuality))
+		lunchDuration = time.Duration(cfg.MinTimeToLunch + rand.Intn(cfg.MaxTimeToLunch-cfg.MinTimeToLunch+1))
+	}
+
+	slog.Debug("Delays initialized", "ClockInDelay", clockInDelay, "lunchDelay", lunchDelay, "lunchDuration", lunchDuration, "clockOutDelay", clockOutDelay)
+	return
 }
