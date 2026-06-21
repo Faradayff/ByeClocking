@@ -107,7 +107,9 @@ func waitingTicker(targetHour time.Time, signal chan<- bool) {
 }
 
 func waitUntilTomorrow(clockIn time.Time) {
-	wakeUpTime := time.Until(clockIn) - time.Hour
+	now := time.Now()
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, clockIn.Hour(), clockIn.Minute(), clockIn.Second(), clockIn.Nanosecond(), now.Location())
+	wakeUpTime := time.Until(tomorrow) - time.Hour
 	slog.Debug("Waiting until tomorrow", "duration", wakeUpTime.Minutes())
 	<-time.After(wakeUpTime)
 }
@@ -116,10 +118,15 @@ func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time) {
 	slog.Info("Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
-	clockInTime := cfg.ClockIn.Time.Add(clockInDelay * time.Minute)
-	lunchTime := cfg.Lunchtime.Time.Add(lunchDelay * time.Minute)
-	lunchFinishTime := cfg.Lunchtime.Time.Add(lunchDuration * time.Minute)
-	clockOutTime := cfg.ClockOut.Time.Add(clockOutDelay * time.Minute)
+	now := time.Now()
+	setToday := func(t time.Time) time.Time {
+		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
+	}
+
+	clockInTime := setToday(cfg.ClockIn.Time).Add(clockInDelay * time.Minute)
+	lunchTime := setToday(cfg.Lunchtime.Time).Add(lunchDelay * time.Minute)
+	lunchFinishTime := setToday(cfg.Lunchtime.Time).Add(lunchDuration * time.Minute)
+	clockOutTime := setToday(cfg.ClockOut.Time).Add(clockOutDelay * time.Minute)
 
 	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime)
 	return clockInTime, lunchTime, lunchFinishTime, clockOutTime
