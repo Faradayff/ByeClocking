@@ -36,7 +36,7 @@ func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time, bo
 
 	if hasLunch {
 		lunchTime = setToday(cfg.Lunchtime.Time).Add(lunchDelay)
-		lunchFinishTime = setToday(cfg.Lunchtime.Time).Add(lunchDuration)
+		lunchFinishTime = setToday(cfg.Lunchtime.Time).Add(lunchDuration).Add(lunchDelay)
 	}
 
 	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
