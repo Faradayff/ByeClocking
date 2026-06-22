@@ -14,6 +14,7 @@ type ClockTime struct {
 	time.Time
 }
 
+// UnmarshalJSON parses a time string in "HH:mm" format into a ClockTime object.
 func (ct *ClockTime) UnmarshalJSON(data []byte) error {
 	value := strings.Trim(string(data), `"`)
 
@@ -30,6 +31,7 @@ func (ct *ClockTime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON converts a ClockTime object back into a JSON string format ("HH:mm").
 func (ct *ClockTime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ct.Format("15:04"))
 }
@@ -51,6 +53,7 @@ type Config struct {
 	SummerPeriod       []string    `json:"summer_period"`
 }
 
+// LoadConfig reads, parses, and validates the configuration from the specified JSON file.
 func LoadConfig(filePath string) (*Config, error) {
 	slog.Debug("Getting config from file")
 
@@ -73,6 +76,7 @@ func LoadConfig(filePath string) (*Config, error) {
 	return &cfg, nil
 }
 
+// validate ensures that the configuration values are correct, consistent, and normalized.
 func (cfg *Config) validate() error {
 	if err := cfg.validateRequiredFields(); err != nil {
 		return err
@@ -87,6 +91,7 @@ func (cfg *Config) validate() error {
 	return nil
 }
 
+// validateRequiredFields checks if all mandatory configuration fields are present.
 func (cfg *Config) validateRequiredFields() error {
 	if cfg.ClockingPlatform == "" {
 		return requiredStringError("Clocking platform", "clocking platform")
@@ -104,11 +109,13 @@ func (cfg *Config) validateRequiredFields() error {
 	return nil
 }
 
+// requiredStringError logs and returns an error for a missing required string field.
 func requiredStringError(displayName, errorName string) error {
 	slog.Error(displayName + " is empty. Stopping")
 	return errors.New(errorName + " is empty")
 }
 
+// normalizeUnpunctuality ensures the unpunctuality value is not negative, resetting it to zero if it is.
 func (cfg *Config) normalizeUnpunctuality() {
 	if cfg.Unpunctuality >= 0 {
 		return
@@ -118,6 +125,7 @@ func (cfg *Config) normalizeUnpunctuality() {
 	cfg.Unpunctuality = 0
 }
 
+// normalizeLeaveUnpunctuality ensures the leave unpunctuality value is not negative, resetting it to zero if it is.
 func (cfg *Config) normalizeLeaveUnpunctuality() {
 	if cfg.LeaveUnpunctuality >= 0 {
 		return
@@ -127,6 +135,7 @@ func (cfg *Config) normalizeLeaveUnpunctuality() {
 	cfg.LeaveUnpunctuality = 0
 }
 
+// validateLunchSettings checks the consistency of lunch-related configuration parameters.
 func (cfg *Config) validateLunchSettings() {
 	const minimumLunchDuration = 1
 
@@ -156,6 +165,7 @@ func (cfg *Config) validateLunchSettings() {
 	}
 }
 
+// normalizeLunchUnpunctuality ensures the lunch unpunctuality value is not negative, resetting it to zero if it is.
 func (cfg *Config) normalizeLunchUnpunctuality() {
 	if cfg.LunchUnpunctuality >= 0 {
 		return
@@ -165,6 +175,7 @@ func (cfg *Config) normalizeLunchUnpunctuality() {
 	cfg.LunchUnpunctuality = 0
 }
 
+// validateSummerSettings verifies the summer period and times configuration for validity.
 func (cfg *Config) validateSummerSettings() {
 	if len(cfg.SummerPeriod) != 2 || cfg.SummerPeriod[0] == "" || cfg.SummerPeriod[1] == "" {
 		slog.Warn("Summer period hasn't two dates. Disabling it")

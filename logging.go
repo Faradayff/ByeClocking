@@ -12,6 +12,7 @@ const (
 	logDir = "."
 )
 
+// initLogging configures the slog logger with the specified log level and sets up file output.
 func initLogging(loglevel string) {
 	opts := &slog.HandlerOptions{}
 

@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// Run is the main application loop that orchestrates the clocking actions throughout the day.
 func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 	for {
 		slog.Info("Starting the day")
@@ -99,6 +100,7 @@ func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 	}
 }
 
+// waitUntilTomorrow calculates the time until the next day's clock-in time and waits for it.
 func waitUntilTomorrow(ctx context.Context, clockIn time.Time) error {
 	now := time.Now()
 	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, clockIn.Hour(), clockIn.Minute(), clockIn.Second(), clockIn.Nanosecond(), now.Location())

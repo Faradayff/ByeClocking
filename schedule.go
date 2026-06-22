@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// randomizeHours generates the specific execution times for today's clock actions, applying unpunctuality delays.
 func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time, bool) {
 	slog.Debug("Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
@@ -42,6 +43,7 @@ func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time, bo
 	return clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch
 }
 
+// initDelays calculates the random delay durations for each clocking action based on the configuration limits.
 func initDelays(cfg *Config) (clockInDelay time.Duration, lunchDelay time.Duration, lunchDuration time.Duration, clockOutDelay time.Duration) {
 	if cfg.Unpunctuality > 0 {
 		clockInDelay = time.Duration(rand.Intn(cfg.Unpunctuality)) * time.Minute
