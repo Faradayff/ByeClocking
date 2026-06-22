@@ -166,8 +166,8 @@ func (cfg *Config) normalizeLunchUnpunctuality() {
 }
 
 func (cfg *Config) validateSummerSettings() {
-	if len(cfg.SummerPeriod)%2 != 0 {
-		slog.Warn("Summer period is not even. Disabling it")
+	if len(cfg.SummerPeriod) != 2 || cfg.SummerPeriod[0] == "" || cfg.SummerPeriod[1] == "" {
+		slog.Warn("Summer period hasn't two dates. Disabling it")
 		cfg.SummerPeriod = nil
 		return
 	}

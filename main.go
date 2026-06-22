@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"log/slog"
 	"math/rand"
@@ -36,7 +37,7 @@ func main() {
 
 	for {
 		slog.Info("Starting the day")
-		clockInTime, lunchTime, lunchFinishTime, clockOutTime := randomizeHours(cfg)
+		clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch := randomizeHours(cfg)
 
 		slog.Debug("Waiting to clock in")
 		if toClock, err := waitUntil(ctx, clockInTime); err != nil {
@@ -48,24 +49,28 @@ func main() {
 			slog.Info("Skipped clock in (missed event)")
 		}
 
-		slog.Debug("Waiting to go to lunch")
-		if toClock, err := waitUntil(ctx, lunchTime); err != nil {
-			break
-		} else if toClock {
-			slog.Info("Lunch time")
-			// clockPause
-		} else {
-			slog.Info("Skipped lunch time (missed event)")
-		}
+		if hasLunch {
+			slog.Debug("Waiting to go to lunch")
+			if toClock, err := waitUntil(ctx, lunchTime); err != nil {
+				break
+			} else if toClock {
+				slog.Info("Lunch time")
+				// clockPause
+			} else {
+				slog.Info("Skipped lunch time (missed event)")
+			}
 
-		slog.Debug("Waiting to go back from lunch")
-		if toClock, err := waitUntil(ctx, lunchFinishTime); err != nil {
-			break
-		} else if toClock {
-			slog.Info("Back from lunch time")
-			// clockResume
+			slog.Debug("Waiting to go back from lunch")
+			if toClock, err := waitUntil(ctx, lunchFinishTime); err != nil {
+				break
+			} else if toClock {
+				slog.Info("Back from lunch time")
+				// clockResume
+			} else {
+				slog.Info("Skipped back from lunch time (missed event)")
+			}
 		} else {
-			slog.Info("Skipped back from lunch time (missed event)")
+			slog.Info("Summer time. Skipping lunch break")
 		}
 
 		slog.Debug("Waiting to clock out")
@@ -108,7 +113,15 @@ func initLogging(loglevel string) {
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
-	handler := slog.NewTextHandler(logFile, opts)
+	defer logFile.Close()
+
+	var handler slog.Handler
+	if loglevel == "DEBUG" {
+		multiWriter := io.MultiWriter(os.Stdout, logFile)
+		handler = slog.NewTextHandler(multiWriter, opts)
+	} else {
+		handler = slog.NewTextHandler(logFile, opts)
+	}
 
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
@@ -161,8 +174,8 @@ func waitUntilTomorrow(ctx context.Context, clockIn time.Time) error {
 	}
 }
 
-func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time) {
-	slog.Info("Setting up delays and times")
+func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time, bool) {
+	slog.Debug("Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
 	now := time.Now()
@@ -170,25 +183,43 @@ func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time) {
 		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
 	}
 
-	clockInTime := setToday(cfg.ClockIn.Time).Add(clockInDelay * time.Minute)
-	lunchTime := setToday(cfg.Lunchtime.Time).Add(lunchDelay * time.Minute)
-	lunchFinishTime := setToday(cfg.Lunchtime.Time).Add(lunchDuration * time.Minute)
-	clockOutTime := setToday(cfg.ClockOut.Time).Add(clockOutDelay * time.Minute)
+	isSummer := isSummerTime(cfg.SummerPeriod)
 
-	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime)
-	return clockInTime, lunchTime, lunchFinishTime, clockOutTime
+	var clockIn, clockOut time.Time
+	if isSummer {
+		clockIn = cfg.SummerTimes[0].Time
+		clockOut = cfg.SummerTimes[1].Time
+		slog.Info("Using summer times", "clockIn", clockIn, "clockOut", clockOut)
+	} else {
+		clockIn = cfg.ClockIn.Time
+		clockOut = cfg.ClockOut.Time
+	}
+
+	clockInTime := setToday(clockIn).Add(clockInDelay)
+	clockOutTime := setToday(clockOut).Add(clockOutDelay)
+
+	var lunchTime, lunchFinishTime time.Time
+	hasLunch := cfg.Lunchtime != nil && !isSummer
+
+	if hasLunch {
+		lunchTime = setToday(cfg.Lunchtime.Time).Add(lunchDelay)
+		lunchFinishTime = setToday(cfg.Lunchtime.Time).Add(lunchDuration)
+	}
+
+	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
+	return clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch
 }
 
 func initDelays(cfg *Config) (clockInDelay time.Duration, lunchDelay time.Duration, lunchDuration time.Duration, clockOutDelay time.Duration) {
 	if cfg.Unpunctuality > 0 {
-		clockInDelay = time.Duration(rand.Intn(cfg.Unpunctuality))
-		clockOutDelay = time.Duration(rand.Intn(cfg.LeaveUnpunctuality)) + clockInDelay
+		clockInDelay = time.Duration(rand.Intn(cfg.Unpunctuality)) * time.Minute
+		clockOutDelay = time.Duration(rand.Intn(cfg.LeaveUnpunctuality))*time.Minute + clockInDelay
 	}
 	if cfg.LunchUnpunctuality > 0 {
-		lunchDelay = time.Duration(rand.Intn(cfg.LunchUnpunctuality))
-		lunchDuration = time.Duration(cfg.MinTimeToLunch + rand.Intn(cfg.MaxTimeToLunch-cfg.MinTimeToLunch+1))
+		lunchDelay = time.Duration(rand.Intn(cfg.LunchUnpunctuality)) * time.Minute
+		lunchDuration = time.Duration(cfg.MinTimeToLunch+rand.Intn(cfg.MaxTimeToLunch-cfg.MinTimeToLunch+1)) * time.Minute
 	}
 
-	slog.Debug("Delays initialized", "ClockInDelay", clockInDelay.Round(time.Minute), "lunchDelay", lunchDelay.Round(time.Minute), "lunchDuration", lunchDuration.Round(time.Minute), "clockOutDelay", clockOutDelay.Round(time.Minute))
+	slog.Debug("Delays initialized", "ClockInDelay", clockInDelay, "lunchDelay", lunchDelay, "lunchDuration", lunchDuration, "clockOutDelay", clockOutDelay)
 	return
 }
