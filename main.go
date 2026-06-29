@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/Faradayff/ByeClocking/clockers"
 )
 
 // main is the entry point of the ByeClocking application.
@@ -27,7 +29,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	Run(ctx, cfg, &DummyClocker{})
+	var clocker Clocker
+	switch cfg.ClockingPlatform {
+	case "myteam2go":
+		clocker = clockers.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password)
+	default:
+		clocker = &DummyClocker{}
+	}
+
+	Run(ctx, cfg, clocker)
 
 	slog.Info("Application shut down gracefully")
 }
