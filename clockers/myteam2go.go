@@ -12,19 +12,23 @@ import (
 
 // MyTeam2GoClocker implements the Clocker interface for MyTeam2Go system.
 type MyTeam2GoClocker struct {
-	baseURL  string
-	username string
-	password string
-	client   *http.Client
+	baseURL   string
+	username  string
+	password  string
+	latitude  float64
+	longitude float64
+	client    *http.Client
 }
 
 // NewMyTeam2GoClocker creates a new MyTeam2Go clocker instance.
-func NewMyTeam2GoClocker(company, username, password string) *MyTeam2GoClocker {
+func NewMyTeam2GoClocker(company, username, password string, latitude, longitude float64) *MyTeam2GoClocker {
 	jar, _ := cookiejar.New(nil)
 	return &MyTeam2GoClocker{
-		baseURL:  "https://" + company + ".myteam2go.com",
-		username: username,
-		password: password,
+		baseURL:   "https://" + company + ".myteam2go.com",
+		username:  username,
+		password:  password,
+		latitude:  latitude,
+		longitude: longitude,
 		client: &http.Client{
 			Jar: jar,
 		},
@@ -51,6 +55,8 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	return nil
 }
 
+// login authenticates the user by sending a POST request to the login endpoint with username and password credentials.
+// It retrieves and stores the JSESSIONID cookie for session management. Returns an error if login fails.
 func (c *MyTeam2GoClocker) login(ctx context.Context) error {
 	loginURL := c.baseURL + "/j_security_check"
 

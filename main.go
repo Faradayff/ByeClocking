@@ -32,7 +32,7 @@ func main() {
 	var clocker Clocker
 	switch cfg.ClockingPlatform {
 	case "myteam2go":
-		clocker = clockers.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password)
+		clocker = clockers.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password, cfg.Latitude, cfg.Longitude)
 	default:
 		clocker = &DummyClocker{}
 	}

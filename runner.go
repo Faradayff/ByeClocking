@@ -19,7 +19,8 @@ func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 			slog.Info("Clock in time")
 			err := clocker.ClockIn(ctx)
 			if err != nil {
-				slog.Warn("Error when clocking in", "error", err)
+				slog.Error("Failed to clock in", "error", err)
+				break
 			}
 		} else {
 			slog.Info("Skipped clock in (missed event)")
@@ -79,11 +80,11 @@ func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 	timeToClock := time.Until(targetHour)
 
-	// If the event is more than 5 minutes in the past, consider it missed and skip it.
-	if timeToClock < -5*time.Minute {
+	// If the event is more than 30 minutes in the past, consider it missed and skip it.
+	if timeToClock < -30*time.Minute {
 		slog.Debug("Time to clock was way before, skipping it", "timeToClock", timeToClock.Round(time.Minute))
 		return false, nil
-	} else if timeToClock <= 0 { // If it's slightly in the past (e.g., up to 5 mins), execute immediately
+	} else if timeToClock <= 0 { // If it's slightly in the past (e.g., up to 30 mins), execute immediately
 		slog.Debug("Time to clock was just a moment ago, time to clock", "timeToClock", timeToClock.Round(time.Minute))
 		return true, nil
 	}
