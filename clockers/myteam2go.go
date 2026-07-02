@@ -47,6 +47,7 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	}
 
 	homeURL := c.baseURL + "/home.xhtml"
+	homeReferer := c.baseURL + "/home"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
 	if err != nil {
 		slog.Error("Failed to create home request", "error", err)
@@ -72,28 +73,45 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 		return nil
 	}
 
-	// Extract ViewState
+	// Extract ViewState from full HTML.
 	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	// In JSF partial/ajax responses the ViewState is embedded in a CDATA update block.
+	viewStateCDATARegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^\]]+)\]\]></update>`)
+
+	extractViewState := func(body string) string {
+		if m := viewStateRegex.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+		if m := viewStateCDATARegex.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+		return ""
+	}
+
 	matches := viewStateRegex.FindStringSubmatch(html)
 	if len(matches) < 2 {
 		return fmt.Errorf("could not find ViewState on home page")
 	}
 	viewState := matches[1]
 
-	// 1. Click "Mi control horario" to initialize the dialog
-	menuRegex := regexp.MustCompile(`id="([^"]+)"[^>]*class="[^"]*menuHome-employee-general-workAssistance[^"]*"`)
+	// 1. Click "Mi control horario" topbar button to load the workAssistanceForm dialog.
+	// The topbar button (id="topMenuIdForm:menuWorkAssitance") triggers a partial update of
+	// workAssistanceForm. The sidebar link (menuHome-employee-general-workAssistance) redirects
+	// to the assistance list page and must NOT be used.
+	menuRegex := regexp.MustCompile(`id="(topMenuIdForm:menuWork[^"]+)"`)
 	menuMatches := menuRegex.FindStringSubmatch(html)
 	if len(menuMatches) < 2 {
-		return fmt.Errorf("could not find 'Mi control horario' menu item")
+		return fmt.Errorf("could not find 'Mi control horario' topbar button")
 	}
 	menuID := menuMatches[1]
+	slog.Debug("Found topbar menu button", "menuID", menuID)
 
 	menuData := url.Values{}
 	menuData.Set("jakarta.faces.partial.ajax", "true")
 	menuData.Set("jakarta.faces.source", menuID)
 	menuData.Set("jakarta.faces.partial.execute", menuID)
 	menuData.Set(menuID, menuID)
-	menuData.Set("menuForm", "menuForm")
+	menuData.Set("topMenuIdForm", "topMenuIdForm")
 	menuData.Set("jakarta.faces.ViewState", viewState)
 
 	menuReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(menuData.Encode()))
@@ -101,7 +119,7 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	menuReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
 	menuReq.Header.Set("Faces-Request", "partial/ajax")
 	menuReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-	c.setBrowserHeaders(menuReq, homeURL)
+	c.setBrowserHeaders(menuReq, homeReferer)
 
 	menuResp, err := c.client.Do(menuReq)
 	if err != nil {
@@ -112,8 +130,9 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	menuHtml := string(menuBytes)
 	menuResp.Body.Close()
 
-	if m := viewStateRegex.FindStringSubmatch(menuHtml); len(m) >= 2 {
-		viewState = m[1]
+	if vs := extractViewState(menuHtml); vs != "" {
+		viewState = vs
+		slog.Debug("ViewState updated from menu response")
 	}
 
 	// Wait a tiny bit just like a real user
@@ -161,7 +180,7 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	changeReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
 	changeReq.Header.Set("Faces-Request", "partial/ajax")
 	changeReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-	c.setBrowserHeaders(changeReq, homeURL)
+	c.setBrowserHeaders(changeReq, homeReferer)
 
 	changeResp, err := c.client.Do(changeReq)
 	if err != nil {
@@ -173,51 +192,17 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	slog.Debug("Change event response", "body", changeHtml)
 	changeResp.Body.Close()
 
-	// Extract updateLocationForm remote command ID
-	locCmdRegex := regexp.MustCompile(`updateLocationForm\s*=\s*function\(\)\s*\{return\s*PrimeFaces\.ab\(\{s:"([^"]+)"`)
-	locCmdMatches := locCmdRegex.FindStringSubmatch(changeHtml)
-	if len(locCmdMatches) < 2 {
-		locCmdMatches = locCmdRegex.FindStringSubmatch(html)
-		if len(locCmdMatches) < 2 {
-			slog.Warn("Could not find updateLocationForm remote command ID, continuing anyway")
-		}
+	if vs := extractViewState(changeHtml); vs != "" {
+		viewState = vs
+		slog.Debug("ViewState updated from change response")
 	}
 
+	// NOTE: We intentionally skip the updateLocationForm intermediate request.
+	// That call uses ps:true (process @form) which triggers full JSF validation
+	// server-side and fails because the bean state isn't ready yet.
+	// The browser fires it as a background geolocation update, but the coordinates
+	// are also included in the final Guardar submit — which is the only one that matters.
 	lat, lon, acc := c.humanLocation()
-
-	if len(locCmdMatches) >= 2 {
-		locCmdID := locCmdMatches[1]
-		locData := url.Values{}
-		locData.Set("jakarta.faces.partial.ajax", "true")
-		locData.Set("jakarta.faces.source", locCmdID)
-		locData.Set("jakarta.faces.partial.execute", "workAssistanceForm:locationLatitude workAssistanceForm:locationLongitude workAssistanceForm:locationError")
-		locData.Set("jakarta.faces.partial.render", "workAssistanceForm")
-		locData.Set(locCmdID, locCmdID)
-		locData.Set("workAssistanceForm:locationLatitude", lat)
-		locData.Set("workAssistanceForm:locationLongitude", lon)
-		locData.Set("workAssistanceForm:locationError", acc)
-		locData.Set("jakarta.faces.ViewState", viewState)
-
-		locReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(locData.Encode()))
-		locReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-		locReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
-		locReq.Header.Set("Faces-Request", "partial/ajax")
-		locReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-		c.setBrowserHeaders(locReq, homeURL)
-
-		locResp, err := c.client.Do(locReq)
-		if err != nil {
-			slog.Error("Failed to execute updateLocationForm", "error", err)
-		} else {
-			locBytes, _ := io.ReadAll(locResp.Body)
-			slog.Debug("Update location response", "body", string(locBytes))
-			locResp.Body.Close()
-			if m := viewStateRegex.FindStringSubmatch(string(locBytes)); len(m) >= 2 {
-				viewState = m[1]
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
 
 	// 3. Submit the form by clicking "Guardar"
 	data := url.Values{}
@@ -244,7 +229,7 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	postReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
 	postReq.Header.Set("Faces-Request", "partial/ajax")
 	postReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-	c.setBrowserHeaders(postReq, homeURL)
+	c.setBrowserHeaders(postReq, homeReferer)
 
 	postResp, err := c.client.Do(postReq)
 	if err != nil {
@@ -342,10 +327,6 @@ func (c *MyTeam2GoClocker) login(ctx context.Context) error {
 
 // isClockedIn checks if the user is currently clocked in.
 func (c *MyTeam2GoClocker) isClockedIn(ctx context.Context) (bool, error) {
-	if err := c.login(ctx); err != nil {
-		return false, err
-	}
-
 	// Give the server a moment to reflect the action before querying status.
 	time.Sleep(2 * time.Second)
 
