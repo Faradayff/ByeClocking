@@ -9,6 +9,14 @@ import (
 // Run is the main application loop that orchestrates the clocking actions throughout the day.
 func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 	for {
+		if now := time.Now().Weekday(); now == time.Saturday || now == time.Sunday {
+			slog.Info("It is the weekend, skipping clocking today")
+			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+				break
+			}
+			continue
+		}
+
 		slog.Info("Starting the day")
 		clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch := randomizeHours(cfg)
 
