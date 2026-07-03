@@ -1,13 +1,16 @@
-package main
+package core
 
 import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/Faradayff/ByeClocking/internal/clients"
+	"github.com/Faradayff/ByeClocking/internal/config"
 )
 
 // Run is the main application loop that orchestrates the clocking actions throughout the day.
-func Run(ctx context.Context, cfg *Config, clocker Clocker) {
+func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 	for {
 		if now := time.Now().Weekday(); now == time.Saturday || now == time.Sunday {
 			slog.Info("It is the weekend, skipping clocking today")

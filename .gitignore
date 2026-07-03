@@ -33,4 +33,4 @@ config.json
 # .vscode/
 
 # Logs
-*.log
+logs/
