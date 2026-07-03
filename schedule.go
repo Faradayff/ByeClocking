@@ -7,7 +7,7 @@ import (
 )
 
 // randomizeHours generates the specific execution times for today's clock actions, applying unpunctuality delays.
-func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time, bool) {
+func randomizeHours(cfg *Config) (clockInTime time.Time, lunchTime time.Time, lunchFinishTime time.Time, clockOutTime time.Time, hasLunch bool) {
 	slog.Debug("Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
@@ -28,19 +28,18 @@ func randomizeHours(cfg *Config) (time.Time, time.Time, time.Time, time.Time, bo
 		clockOut = cfg.ClockOut.Time
 	}
 
-	clockInTime := setToday(clockIn).Add(clockInDelay)
-	clockOutTime := setToday(clockOut).Add(clockOutDelay)
+	clockInTime = setToday(clockIn).Add(clockInDelay)
+	clockOutTime = setToday(clockOut).Add(clockOutDelay)
 
-	var lunchTime, lunchFinishTime time.Time
-	hasLunch := cfg.Lunchtime != nil && !isSummer
+	hasLunch = cfg.Lunchtime != nil && !isSummer
 
 	if hasLunch {
 		lunchTime = setToday(cfg.Lunchtime.Time).Add(lunchDelay)
-		lunchFinishTime = setToday(cfg.Lunchtime.Time).Add(lunchDuration)
+		lunchFinishTime = lunchTime.Add(lunchDuration)
 	}
 
 	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
-	return clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch
+	return
 }
 
 // initDelays calculates the random delay durations for each clocking action based on the configuration limits.
@@ -51,8 +50,8 @@ func initDelays(cfg *Config) (clockInDelay time.Duration, lunchDelay time.Durati
 	}
 	if cfg.LunchUnpunctuality > 0 {
 		lunchDelay = time.Duration(rand.Intn(cfg.LunchUnpunctuality)) * time.Minute
-		lunchDuration = time.Duration(cfg.MinTimeToLunch+rand.Intn(cfg.MaxTimeToLunch-cfg.MinTimeToLunch+1)) * time.Minute
 	}
+	lunchDuration = time.Duration(cfg.MinTimeToLunch+rand.Intn(cfg.MaxTimeToLunch-cfg.MinTimeToLunch+1))*time.Minute + lunchDelay
 
 	slog.Debug("Delays initialized", "ClockInDelay", clockInDelay, "lunchDelay", lunchDelay, "lunchDuration", lunchDuration, "clockOutDelay", clockOutDelay)
 	return

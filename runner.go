@@ -34,7 +34,8 @@ func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 				slog.Info("Lunch time")
 				err := clocker.ClockPause(ctx)
 				if err != nil {
-					slog.Warn("Error when clocking pause for lunch", "error", err)
+					slog.Error("Error when clocking pause for lunch", "error", err)
+					break
 				}
 			} else {
 				slog.Info("Skipped lunch time (missed event)")
@@ -47,7 +48,8 @@ func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 				slog.Info("Back from lunch time")
 				err := clocker.ClockResume(ctx)
 				if err != nil {
-					slog.Warn("Error when clocking resume", "error", err)
+					slog.Error("Error when clocking resume", "error", err)
+					break
 				}
 			} else {
 				slog.Info("Skipped back from lunch time (missed event)")
@@ -63,7 +65,8 @@ func Run(ctx context.Context, cfg *Config, clocker Clocker) {
 			slog.Info("Clock out time")
 			err := clocker.ClockOut(ctx)
 			if err != nil {
-				slog.Warn("Error when clocking out", "error", err)
+				slog.Error("Error when clocking out", "error", err)
+				break
 			}
 		} else {
 			slog.Info("Skipped clock out (missed event)")
