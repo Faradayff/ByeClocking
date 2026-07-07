@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -14,7 +13,6 @@ import (
 	"time"
 )
 
-// MyTeam2GoClocker implements the Clocker interface for MyTeam2Go system.
 type MyTeam2GoClocker struct {
 	baseURL   string
 	username  string
@@ -39,44 +37,187 @@ func NewMyTeam2GoClocker(company, username, password string, latitude, longitude
 	}
 }
 
+// workAssistanceAction describes a clock action to submit via the workAssistanceForm.
+type workAssistanceAction struct {
+	// optionLabel is the visible text of the option to select (e.g. "Inicio jornada laboral").
+	optionLabel string
+	// optionField is the JSF component name that holds the selected value.
+	// When not clocked in, the server renders "inputOption"; once clocked in, it renders "outputOption".
+	optionField string
+	// logVerb is used in log messages to describe the action.
+	logVerb string
+}
+
+var (
+	actionClockIn  = workAssistanceAction{"Inicio jornada laboral", "inputOption", "clock-in"}
+	actionPause    = workAssistanceAction{"Inicio Pausa", "outputOption", "clock-pause"}
+	actionResume   = workAssistanceAction{"Reanudar jornada laboral", "inputOption", "clock-resume"}
+	actionClockOut = workAssistanceAction{"Fin de jornada laboral", "outputOption", "clock-out"}
+)
+
 // ClockIn sends a clock-in request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	if err := c.login(ctx); err != nil {
-		slog.Error("Error login in. Impossible to clock in", "error", err)
+		slog.Error("Error logging in. Impossible to clock in", "error", err)
 		return err
 	}
 
+	isReadyTo, err := c.isReadyTo(ctx, actionClockIn)
+	if err != nil {
+		slog.Warn("Could not verify clock-in status before attempting", "error", err)
+	}
+	if !isReadyTo {
+		slog.Debug("Already clocked in, skipping")
+		return nil
+	}
+
+	if err := c.submitWorkAssistance(ctx, actionClockIn); err != nil {
+		slog.Error("Clock-in failed", "error", err)
+		return err
+	}
+
+	time.Sleep(2 * time.Second)
+	isReadyTo, err = c.isReadyTo(ctx, actionClockOut)
+	if err != nil {
+		return fmt.Errorf("clock-in submitted but verification failed: %w", err)
+	}
+	if !isReadyTo {
+		return fmt.Errorf("clock-in submitted but isReadyToClockOut still reports false")
+	}
+
+	slog.Debug("Clock-in confirmed successfully")
+	return nil
+}
+
+// ClockOut sends a clock-out request to MyTeam2Go.
+func (c *MyTeam2GoClocker) ClockOut(ctx context.Context) error {
+	if err := c.login(ctx); err != nil {
+		slog.Error("Error logging in. Impossible to clock out", "error", err)
+		return err
+	}
+
+	isReadyTo, err := c.isReadyTo(ctx, actionClockOut)
+	if err != nil {
+		slog.Warn("Could not verify clock-in status before attempting", "error", err)
+	}
+	if !isReadyTo {
+		slog.Debug("Already clocked out, skipping")
+		return nil
+	}
+
+	if err := c.submitWorkAssistance(ctx, actionClockOut); err != nil {
+		slog.Error("Clock-out failed", "error", err)
+		return err
+	}
+
+	time.Sleep(2 * time.Second)
+	isReadyTo, err = c.isReadyTo(ctx, actionClockOut)
+	if err != nil {
+		return fmt.Errorf("clock-out submitted but verification failed: %w", err)
+	}
+	if isReadyTo {
+		return fmt.Errorf("clock-out submitted but isReadyToClockOut still reports true")
+	}
+
+	slog.Debug("Clock-out submitted successfully")
+	return nil
+}
+
+// ClockPause sends a lunch-pause request to MyTeam2Go.
+func (c *MyTeam2GoClocker) ClockPause(ctx context.Context) error {
+	if err := c.login(ctx); err != nil {
+		slog.Error("Error logging in. Impossible to clock pause", "error", err)
+		return err
+	}
+
+	isReadyTo, err := c.isReadyTo(ctx, actionPause)
+	if err != nil {
+		slog.Warn("Could not verify clock-in status before attempting", "error", err)
+	}
+	if !isReadyTo {
+		slog.Debug("Already in pause, skipping")
+		return nil
+	}
+
+	if err := c.submitWorkAssistance(ctx, actionPause); err != nil {
+		slog.Error("Clock-pause failed", "error", err)
+		return err
+	}
+
+	time.Sleep(2 * time.Second)
+	isReadyTo, err = c.isReadyTo(ctx, actionResume)
+	if err != nil {
+		return fmt.Errorf("clock-pause submitted but verification failed: %w", err)
+	}
+	if !isReadyTo {
+		return fmt.Errorf("clock-pause submitted but isReadyToResume still reports false")
+	}
+
+	slog.Debug("Clock-pause submitted successfully")
+	return nil
+}
+
+// ClockResume sends a resume-from-lunch request to MyTeam2Go.
+func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
+	if err := c.login(ctx); err != nil {
+		slog.Error("Error logging in. Impossible to clock resume", "error", err)
+		return err
+	}
+
+	isReadyTo, err := c.isReadyTo(ctx, actionResume)
+	if err != nil {
+		slog.Warn("Could not verify clock-resume status before attempting", "error", err)
+	}
+	if !isReadyTo {
+		slog.Debug("Already clocked back, skipping")
+		return nil
+	}
+
+	if err := c.submitWorkAssistance(ctx, actionResume); err != nil {
+		slog.Error("Clock-resume failed", "error", err)
+		return err
+	}
+
+	time.Sleep(2 * time.Second)
+	isReadyTo, err = c.isReadyTo(ctx, actionClockOut)
+	if err != nil {
+		return fmt.Errorf("clock-resume submitted but verification failed: %w", err)
+	}
+	if !isReadyTo {
+		return fmt.Errorf("clock-resume submitted but isReadyToClockOut still reports false")
+	}
+
+	slog.Debug("Clock-resume submitted successfully")
+	return nil
+}
+
+// submitWorkAssistance executes the full workAssistanceForm flow for the given action:
+//  1. GET the home page and extract ViewState.
+//  2. POST the topbar "Mi control horario" button to load the workAssistanceForm dialog.
+//  3. POST the change event to select the desired option.
+//  4. POST "Guardar" to submit the form.
+func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action workAssistanceAction) error {
 	homeURL := c.baseURL + "/home.xhtml"
 	homeReferer := c.baseURL + "/home"
+
+	// ── GET home page ─────────────────────────────────────────────────────────
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
 	if err != nil {
-		slog.Error("Failed to create home request", "error", err)
 		return fmt.Errorf("failed to create home request: %w", err)
 	}
 	c.setBrowserHeaders(req, c.baseURL+"/")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		slog.Error("Failed to fetch home page", "error", err)
 		return fmt.Errorf("failed to fetch home page: %w", err)
 	}
-	defer resp.Body.Close()
-
 	bodyBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
 	html := string(bodyBytes)
 
-	// If the user is already clocked in, the dropdown shows options like
-	// "Fin de jornada laboral" or "Inicio Pausa" (NOT "Inicio jornada laboral").
-	// "Inicio jornada laboral" only appears when the user has NOT clocked in yet.
-	if !strings.Contains(html, "Inicio jornada laboral") {
-		slog.Warn("Already clocked in (Inicio jornada laboral not available), skipping")
-		return nil
-	}
-
-	// Extract ViewState from full HTML.
+	// ── ViewState helpers ─────────────────────────────────────────────────────
 	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
-	// In JSF partial/ajax responses the ViewState is embedded in a CDATA update block.
-	viewStateCDATARegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^\]]+)\]\]></update>`)
+	viewStateCDATARegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^]]+)]]></update>`)
 
 	extractViewState := func(body string) string {
 		if m := viewStateRegex.FindStringSubmatch(body); len(m) >= 2 {
@@ -88,61 +229,25 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 		return ""
 	}
 
-	matches := viewStateRegex.FindStringSubmatch(html)
-	if len(matches) < 2 {
+	viewState := extractViewState(html)
+	if viewState == "" {
 		return fmt.Errorf("could not find ViewState on home page")
 	}
-	viewState := matches[1]
 
-	// 1. Click "Mi control horario" topbar button to load the workAssistanceForm dialog.
-	// The topbar button (id="topMenuIdForm:menuWorkAssitance") triggers a partial update of
-	// workAssistanceForm. The sidebar link (menuHome-employee-general-workAssistance) redirects
-	// to the assistance list page and must NOT be used.
-	menuRegex := regexp.MustCompile(`id="(topMenuIdForm:menuWork[^"]+)"`)
-	menuMatches := menuRegex.FindStringSubmatch(html)
-	if len(menuMatches) < 2 {
-		return fmt.Errorf("could not find 'Mi control horario' topbar button")
-	}
-	menuID := menuMatches[1]
-	slog.Debug("Found topbar menu button", "menuID", menuID)
-
-	menuData := url.Values{}
-	menuData.Set("jakarta.faces.partial.ajax", "true")
-	menuData.Set("jakarta.faces.source", menuID)
-	menuData.Set("jakarta.faces.partial.execute", menuID)
-	menuData.Set(menuID, menuID)
-	menuData.Set("topMenuIdForm", "topMenuIdForm")
-	menuData.Set("jakarta.faces.ViewState", viewState)
-
-	menuReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(menuData.Encode()))
-	menuReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-	menuReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
-	menuReq.Header.Set("Faces-Request", "partial/ajax")
-	menuReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-	c.setBrowserHeaders(menuReq, homeReferer)
-
-	menuResp, err := c.client.Do(menuReq)
+	// ── Step 1: Click the topbar "Mi control horario" button ─────────────────────
+	menuHtml, newViewState, err := c.loadWorkAssistanceMenu(ctx, html, homeURL, viewState)
 	if err != nil {
-		slog.Error("Failed to click 'Mi control horario'", "error", err)
-		return fmt.Errorf("failed to click 'Mi control horario': %w", err)
+		return err
 	}
-	menuBytes, _ := io.ReadAll(menuResp.Body)
-	menuHtml := string(menuBytes)
-	menuResp.Body.Close()
-
-	if vs := extractViewState(menuHtml); vs != "" {
-		viewState = vs
+	if newViewState != "" {
+		viewState = newViewState
 		slog.Debug("ViewState updated from menu response")
 	}
 
-	// Wait a tiny bit just like a real user
-	time.Sleep(500 * time.Millisecond)
-
-	// Determine button and option values
+	// ── Extract Guardar button name ───────────────────────────────────────────
 	btnRegex := regexp.MustCompile(`name="(workAssistanceForm:j_idt\d+)"[^>]*><span[^>]*>Guardar</span>`)
 	btnMatches := btnRegex.FindStringSubmatch(menuHtml)
 	if len(btnMatches) < 2 {
-		// fallback to original HTML if not found in ajax response
 		btnMatches = btnRegex.FindStringSubmatch(html)
 		if len(btnMatches) < 2 {
 			return fmt.Errorf("could not find Guardar button in workAssistanceForm")
@@ -150,26 +255,31 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	}
 	btnName := btnMatches[1]
 
-	optRegex := regexp.MustCompile(`value="(\d+)"[^>]*>Inicio jornada laboral<`)
+	// ── Extract option value ──────────────────────────────────────────────────
+	optRegex := regexp.MustCompile(`value="(\d+)"[^>]*>` + regexp.QuoteMeta(action.optionLabel) + `<`)
 	optMatches := optRegex.FindStringSubmatch(menuHtml)
 	if len(optMatches) < 2 {
 		optMatches = optRegex.FindStringSubmatch(html)
 		if len(optMatches) < 2 {
-			return fmt.Errorf("could not find Inicio jornada laboral option")
+			return fmt.Errorf("could not find option '%s'", action.optionLabel)
 		}
 	}
 	optValue := optMatches[1]
+	slog.Debug("Resolved action parameters", "action", action.logVerb, "btnName", btnName, "optionField", action.optionField, "optValue", optValue)
 
-	// 2. Simulate the change event on the dropdown
+	// ── Step 2: Simulate the change event on the dropdown ─────────────────────
+	time.Sleep(300 * time.Millisecond)
+
+	optionComponent := "workAssistanceForm:" + action.optionField
 	changeData := url.Values{}
 	changeData.Set("jakarta.faces.partial.ajax", "true")
-	changeData.Set("jakarta.faces.source", "workAssistanceForm:inputOption")
-	changeData.Set("jakarta.faces.partial.execute", "workAssistanceForm:inputOption")
+	changeData.Set("jakarta.faces.source", optionComponent)
+	changeData.Set("jakarta.faces.partial.execute", optionComponent)
 	changeData.Set("jakarta.faces.partial.render", "workAssistanceForm:workAssistanceFormContent")
 	changeData.Set("jakarta.faces.behavior.event", "change")
 	changeData.Set("jakarta.faces.partial.event", "change")
 	changeData.Set("workAssistanceForm", "workAssistanceForm")
-	changeData.Set("workAssistanceForm:inputOption_input", optValue)
+	changeData.Set("workAssistanceForm:"+action.optionField+"_input", optValue)
 	changeData.Set("workAssistanceForm:locationLatitude", "")
 	changeData.Set("workAssistanceForm:locationLongitude", "")
 	changeData.Set("workAssistanceForm:locationError", "")
@@ -184,8 +294,7 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 
 	changeResp, err := c.client.Do(changeReq)
 	if err != nil {
-		slog.Error("Failed to execute change event request", "error", err)
-		return fmt.Errorf("failed to execute change event request: %w", err)
+		return fmt.Errorf("failed to execute change event: %w", err)
 	}
 	changeBytes, _ := io.ReadAll(changeResp.Body)
 	changeHtml := string(changeBytes)
@@ -198,32 +307,31 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	}
 
 	// NOTE: We intentionally skip the updateLocationForm intermediate request.
-	// That call uses ps:true (process @form) which triggers full JSF validation
+	// That call uses ps:true (process @form), which triggers full JSF validation
 	// server-side and fails because the bean state isn't ready yet.
 	// The browser fires it as a background geolocation update, but the coordinates
-	// are also included in the final Guardar submit — which is the only one that matters.
-	lat, lon, acc := c.humanLocation()
+	// are also included in the final "Guardar" submit — which is the only one that matters.
+	lat, lon, locationErr := humanLocation(c.latitude, c.longitude)
 
-	// 3. Submit the form by clicking "Guardar"
-	data := url.Values{}
-	data.Set("jakarta.faces.partial.ajax", "true")
-	data.Set("jakarta.faces.source", btnName)
-	data.Set("jakarta.faces.partial.execute", "@all")
-	data.Set("jakarta.faces.partial.render", "workAssistanceForm messages session_messages workAssistanceForm:WAMessagesDialog")
-	data.Set(btnName, btnName)
-	data.Set("workAssistanceForm", "workAssistanceForm")
-	data.Set("workAssistanceForm:inputOption_input", optValue)
-	data.Set("workAssistanceForm:locationLatitude", lat)
-	data.Set("workAssistanceForm:locationLongitude", lon)
-	data.Set("workAssistanceForm:locationError", acc)
-	data.Set("jakarta.faces.ViewState", viewState)
+	// ── Step 3: Submit "Guardar" ──────────────────────────────────────────────
+	submitData := url.Values{}
+	submitData.Set("jakarta.faces.partial.ajax", "true")
+	submitData.Set("jakarta.faces.source", btnName)
+	submitData.Set("jakarta.faces.partial.execute", "@all")
+	submitData.Set("jakarta.faces.partial.render", "workAssistanceForm messages session_messages workAssistanceForm:WAMessagesDialog")
+	submitData.Set(btnName, btnName)
+	submitData.Set("workAssistanceForm", "workAssistanceForm")
+	submitData.Set("workAssistanceForm:"+action.optionField+"_input", optValue)
+	submitData.Set("workAssistanceForm:locationLatitude", lat)
+	submitData.Set("workAssistanceForm:locationLongitude", lon)
+	submitData.Set("workAssistanceForm:locationError", locationErr)
+	submitData.Set("jakarta.faces.ViewState", viewState)
 
-	slog.Debug("Prepared Clock In request", "viewState", viewState, "buttonName", btnName, "optValue", optValue)
+	slog.Debug("Submitting Guardar", "action", action.logVerb, "viewState", viewState, "btnName", btnName, "optValue", optValue)
 
-	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(data.Encode()))
+	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(submitData.Encode()))
 	if err != nil {
-		slog.Error("Failed to create clock-in request", "error", err)
-		return fmt.Errorf("failed to create clock-in request: %w", err)
+		return fmt.Errorf("failed to create submit request: %w", err)
 	}
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 	postReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
@@ -233,54 +341,23 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 
 	postResp, err := c.client.Do(postReq)
 	if err != nil {
-		slog.Error("Failed to execute clock-in request", "error", err)
-		return fmt.Errorf("failed to execute clock-in request: %w", err)
+		return fmt.Errorf("failed to execute submit request: %w", err)
 	}
 	defer postResp.Body.Close()
 
 	respBody, _ := io.ReadAll(postResp.Body)
 	respStr := string(respBody)
-	slog.Debug("Guardar response", "body", respStr)
+	slog.Debug("Guardar response", "action", action.logVerb, "body", respStr)
 
-	// Check if the response contains a success (no validationFailed or actual success text)
 	if strings.Contains(respStr, "No se ha podido efectuar") {
-		slog.Error("Clock-in rejected by server", "status", postResp.StatusCode)
-		return fmt.Errorf("clock-in rejected by server: no se ha podido efectuar el registro")
+		return fmt.Errorf("%s rejected by server: no se ha podido efectuar el registro", action.logVerb)
 	}
 
-	// Verify the clock-in actually took effect by querying the current state.
-	slog.Debug("Verifying clock-in status after submit")
-	confirmed, err := c.isClockedIn(ctx)
-	if err != nil {
-		slog.Warn("Could not verify clock-in status", "error", err)
-		return fmt.Errorf("clock-in submitted but verification failed: %w", err)
-	}
-	if !confirmed {
-		slog.Error("Clock-in submitted but server state did not change")
-		return fmt.Errorf("clock-in submitted but IsClockedIn still reports false")
-	}
-
-	slog.Info("Clock-in confirmed successfully")
-	return nil
-}
-
-// ClockOut sends a clock-out request to MyTeam2Go.
-func (c *MyTeam2GoClocker) ClockOut(ctx context.Context) error {
-	return nil
-}
-
-// ClockPause sends a pause request to MyTeam2Go.
-func (c *MyTeam2GoClocker) ClockPause(ctx context.Context) error {
-	return nil
-}
-
-// ClockResume sends a resume request to MyTeam2Go.
-func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	return nil
 }
 
 // login authenticates the user by sending a POST request to the login endpoint with username and password credentials.
-// It retrieves and stores the JSESSIONID cookie for session management. Returns an error if login fails.
+// It stores the JSESSIONID cookie for session management. Returns an error if login fails.
 func (c *MyTeam2GoClocker) login(ctx context.Context) error {
 	loginURL := c.baseURL + "/j_security_check"
 
@@ -325,22 +402,18 @@ func (c *MyTeam2GoClocker) login(ctx context.Context) error {
 	return nil
 }
 
-// isClockedIn checks if the user is currently clocked in.
-func (c *MyTeam2GoClocker) isClockedIn(ctx context.Context) (bool, error) {
-	// Give the server a moment to reflect the action before querying status.
-	time.Sleep(2 * time.Second)
-
+// isReadyTo checks if the user is in a state to perform the action by fetching the home page
+// and checking whether the action option is present in the form.
+func (c *MyTeam2GoClocker) isReadyTo(ctx context.Context, status workAssistanceAction) (bool, error) {
 	homeURL := c.baseURL + "/home.xhtml"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
 	if err != nil {
-		slog.Warn("Failed to create request of home page", "error", err)
 		return false, fmt.Errorf("failed to create request: %w", err)
 	}
 	c.setBrowserHeaders(req, c.baseURL+"/")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		slog.Warn("Failed to fetch home page", "error", err)
 		return false, fmt.Errorf("failed to fetch page: %w", err)
 	}
 	defer resp.Body.Close()
@@ -348,43 +421,89 @@ func (c *MyTeam2GoClocker) isClockedIn(ctx context.Context) (bool, error) {
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	html := string(bodyBytes)
 
-	// "Inicio jornada laboral" only appears when NOT clocked in.
-	// When clocked in, different options appear (Fin jornada, Pausa almuerzo, etc.)
-	hasClockInOption := strings.Contains(html, "Inicio jornada laboral")
-	isClockedIn := !hasClockInOption
+	isReadyTo := strings.Contains(html, status.optionLabel)
+	if !isReadyTo {
+		// Try to fetch the work assistance form via AJAX if not found in the initial HTML
+		viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+		viewStateCDATARegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^]]+)]]></update>`)
 
-	slog.Info("Clock-in status checked", "isClockedIn", isClockedIn, "clockInOptionVisible", hasClockInOption)
-	return isClockedIn, nil
-}
+		extractViewState := func(body string) string {
+			if m := viewStateRegex.FindStringSubmatch(body); len(m) >= 2 {
+				return m[1]
+			}
+			if m := viewStateCDATARegex.FindStringSubmatch(body); len(m) >= 2 {
+				return m[1]
+			}
+			return ""
+		}
 
-// humanLocation returns location strings to include in the clock-in form.
-//
-// If coordinates are configured, it returns a slightly jittered version
-// simulating the natural imprecision of a real browser's Geolocation API
-// (±~11 m random offset, 6 decimal places, realistic accuracy in metres).
-//
-// If no coordinates are configured (both zero), it returns empty lat/lon
-// and the permission-denied error message that Chrome sends when the user
-// blocks geolocation access — indistinguishable from a real denial.
-func (c *MyTeam2GoClocker) humanLocation() (lat, lon, locationErr string) {
-	if c.latitude == 0 && c.longitude == 0 {
-		// Mimic MyTeam2Go's permission-denied payload.
-		return "", "", "geolocation.error.permission_denied"
+		viewState := extractViewState(html)
+		if viewState != "" {
+			if menuHtml, _, err := c.loadWorkAssistanceMenu(ctx, html, homeURL, viewState); err == nil {
+				isReadyTo = strings.Contains(menuHtml, status.optionLabel)
+			}
+		}
 	}
 
-	// ±0.0001° ≈ ±11 m, well within normal GPS/WiFi-positioning variance.
-	jitter := func() float64 { return (rand.Float64()*2 - 1) * 0.0001 }
-	lat = fmt.Sprintf("%.6f", c.latitude+jitter())
-	lon = fmt.Sprintf("%.6f", c.longitude+jitter())
-	// locationError is left empty when successful
-	locationErr = ""
-	return
+	slog.Debug("Clock status checked", "status", status.optionLabel, "isReadyTo", isReadyTo)
+	return isReadyTo, nil
+}
+
+// loadWorkAssistanceMenu attempts to load the dynamic work assistance menu via AJAX.
+func (c *MyTeam2GoClocker) loadWorkAssistanceMenu(ctx context.Context, html, homeURL, viewState string) (string, string, error) {
+	menuRegex := regexp.MustCompile(`id="(topMenuIdForm:menuWork[^"]+)"`)
+	menuMatches := menuRegex.FindStringSubmatch(html)
+	if len(menuMatches) < 2 {
+		return "", "", fmt.Errorf("could not find 'Mi control horario' topbar button")
+	}
+	menuID := menuMatches[1]
+	slog.Debug("Found topbar menu button", "menuID", menuID)
+
+	menuData := url.Values{}
+	menuData.Set("jakarta.faces.partial.ajax", "true")
+	menuData.Set("jakarta.faces.source", menuID)
+	menuData.Set("jakarta.faces.partial.execute", menuID)
+	menuData.Set("jakarta.faces.partial.render", "workAssistanceForm")
+	menuData.Set(menuID, menuID)
+	menuData.Set("topMenuIdForm", "topMenuIdForm")
+	menuData.Set("jakarta.faces.ViewState", viewState)
+
+	menuReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(menuData.Encode()))
+	menuReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	menuReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+	menuReq.Header.Set("Faces-Request", "partial/ajax")
+	menuReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	c.setBrowserHeaders(menuReq, c.baseURL+"/home")
+
+	menuResp, err := c.client.Do(menuReq)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to click 'Mi control horario': %w", err)
+	}
+	defer menuResp.Body.Close()
+	menuBytes, _ := io.ReadAll(menuResp.Body)
+	menuHtml := string(menuBytes)
+
+	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	viewStateCDATARegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^]]+)]]></update>`)
+
+	extractViewState := func(body string) string {
+		if m := viewStateRegex.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+		if m := viewStateCDATARegex.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+		return ""
+	}
+
+	newViewState := extractViewState(menuHtml)
+	return menuHtml, newViewState, nil
 }
 
 // setBrowserHeaders adds common browser headers to a request to avoid bot detection.
 func (c *MyTeam2GoClocker) setBrowserHeaders(req *http.Request, referer string) {
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-	req.Header.Set("Accept-Language", "es-ES,es;q=0.9")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "es-ES,es;q=0.9,en;q=0.8")
 	req.Header.Set("Origin", c.baseURL)
 	if referer != "" {
 		req.Header.Set("Referer", referer)

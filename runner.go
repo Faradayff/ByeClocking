@@ -88,7 +88,7 @@ func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 		slog.Debug("Time to clock was way before, skipping it", "timeToClock", timeToClock.Round(time.Minute))
 		return false, nil
 	} else if timeToClock <= 0 { // If it's slightly in the past (e.g., up to 30 mins), execute immediately
-		slog.Debug("Time to clock was just a moment ago, time to clock", "timeToClock", timeToClock.Round(time.Minute))
+		slog.Debug("Time to clock was just a moment ago, clocking", "timeToClock", timeToClock.Round(time.Minute))
 		return true, nil
 	}
 
