@@ -30,7 +30,8 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			slog.Info("Clock in time")
 			err := clocker.ClockIn(ctx)
 			if err != nil {
-				slog.Warn("Error when clocking in", "error", err)
+				slog.Error("Failed to clock in", "error", err)
+				break
 			}
 		} else {
 			slog.Info("Skipped clock in (missed event)")
@@ -44,7 +45,8 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				slog.Info("Lunch time")
 				err := clocker.ClockPause(ctx)
 				if err != nil {
-					slog.Warn("Error when clocking pause for lunch", "error", err)
+					slog.Error("Error when clocking pause for lunch", "error", err)
+					break
 				}
 			} else {
 				slog.Info("Skipped lunch time (missed event)")
@@ -57,7 +59,8 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				slog.Info("Back from lunch time")
 				err := clocker.ClockResume(ctx)
 				if err != nil {
-					slog.Warn("Error when clocking resume", "error", err)
+					slog.Error("Error when clocking resume", "error", err)
+					break
 				}
 			} else {
 				slog.Info("Skipped back from lunch time (missed event)")
@@ -73,7 +76,8 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			slog.Info("Clock out time")
 			err := clocker.ClockOut(ctx)
 			if err != nil {
-				slog.Warn("Error when clocking out", "error", err)
+				slog.Error("Error when clocking out", "error", err)
+				break
 			}
 		} else {
 			slog.Info("Skipped clock out (missed event)")
@@ -90,12 +94,12 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 	timeToClock := time.Until(targetHour)
 
-	// If the event is more than 5 minutes in the past, consider it missed and skip it.
-	if timeToClock < -5*time.Minute {
+	// If the event is more than 30 minutes in the past, consider it missed and skip it.
+	if timeToClock < -30*time.Minute {
 		slog.Debug("Time to clock was way before, skipping it", "timeToClock", timeToClock.Round(time.Minute))
 		return false, nil
-	} else if timeToClock <= 0 { // If it's slightly in the past (e.g., up to 5 mins), execute immediately
-		slog.Debug("Time to clock was just a moment ago, time to clock", "timeToClock", timeToClock.Round(time.Minute))
+	} else if timeToClock <= 0 { // If it's slightly in the past (e.g., up to 30 mins), execute immediately
+		slog.Debug("Time to clock was just a moment ago, clocking", "timeToClock", timeToClock.Round(time.Minute))
 		return true, nil
 	}
 

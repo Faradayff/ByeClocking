@@ -32,7 +32,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	core.Run(ctx, cfg, &clients.DummyClocker{})
+	var clocker clients.Clocker
+	switch cfg.ClockingPlatform {
+	case "myteam2go":
+		clocker = clients.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password, cfg.Latitude, cfg.Longitude)
+	default:
+		clocker = &clients.DummyClocker{}
+	}
+
+	core.Run(ctx, cfg, clocker)
 
 	slog.Info("Application shut down gracefully")
 }

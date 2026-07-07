@@ -41,6 +41,8 @@ type Config struct {
 	Account            string      `json:"account"`
 	Password           string      `json:"password"`
 	CompanyName        string      `json:"company_name"`
+	Latitude           float64     `json:"latitude"`
+	Longitude          float64     `json:"longitude"`
 	ClockIn            ClockTime   `json:"clock_in"`
 	ClockOut           ClockTime   `json:"clock_out"`
 	Unpunctuality      int         `json:"unpunctuality"`
@@ -104,6 +106,9 @@ func (cfg *Config) validateRequiredFields() error {
 	}
 	if cfg.CompanyName == "" {
 		return requiredStringError("Company name", "company name")
+	}
+	if cfg.Latitude == 0 && cfg.Longitude == 0 {
+		slog.Info("No location configured (latitude/longitude are 0). Clock-in will simulate a browser that denied geolocation")
 	}
 
 	return nil

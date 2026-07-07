@@ -3,6 +3,8 @@
   "account": "",
   "password": "",
   "company_name": "",
+  "latitude": 0.0,
+  "longitude": 0.0,
   "clock_in": "08:00",
   "clock_out": "17:00",
   "unpunctuality": 10,
