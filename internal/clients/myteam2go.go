@@ -1,4 +1,4 @@
-package clockers
+package clients
 
 import (
 	"context"

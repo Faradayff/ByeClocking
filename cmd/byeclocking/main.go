@@ -12,8 +12,6 @@ import (
 	"github.com/Faradayff/ByeClocking/internal/config"
 	"github.com/Faradayff/ByeClocking/internal/core"
 	"github.com/Faradayff/ByeClocking/internal/logger"
-
-	"github.com/Faradayff/ByeClocking/clockers"
 )
 
 // main is the entry point of the ByeClocking application.
@@ -37,7 +35,7 @@ func main() {
 	var clocker clients.Clocker
 	switch cfg.ClockingPlatform {
 	case "myteam2go":
-		clocker = clockers.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password, cfg.Latitude, cfg.Longitude)
+		clocker = clients.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password, cfg.Latitude, cfg.Longitude)
 	default:
 		clocker = &clients.DummyClocker{}
 	}
