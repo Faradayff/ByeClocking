@@ -1,4 +1,4 @@
-package main
+package logger
 
 import (
 	"io"
@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	logDir = "."
+	logDir = "logs"
 )
 
-// initLogging configures the slog logger with the specified log level and sets up file output.
-func initLogging(loglevel string) {
+// InitLogging configures the slog logger with the specified log level and sets up file output.
+func InitLogging(loglevel string) {
 	opts := &slog.HandlerOptions{}
 
 	switch loglevel {
@@ -30,6 +30,10 @@ func initLogging(loglevel string) {
 	}
 
 	logFilePath := filepath.Join(logDir, "ByeClocking.log")
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Fatalf("Failed to create log directory: %v", err)
+	}
 
 	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {

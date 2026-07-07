@@ -8,6 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Faradayff/ByeClocking/internal/clients"
+	"github.com/Faradayff/ByeClocking/internal/config"
+	"github.com/Faradayff/ByeClocking/internal/core"
+	"github.com/Faradayff/ByeClocking/internal/logger"
+
 	"github.com/Faradayff/ByeClocking/clockers"
 )
 
@@ -16,11 +21,11 @@ func main() {
 	logLevel := flag.String("loglevel", "DEBUG", "Log level: DEBUG, INFO, WARN or ERROR")
 	flag.Parse()
 
-	initLogging(*logLevel)
+	logger.InitLogging(*logLevel)
 
 	slog.Info("Starting application")
 
-	cfg, err := LoadConfig("config.json")
+	cfg, err := config.LoadConfig("configs/config.json")
 	if err != nil {
 		slog.Error("Failed to load config", "error", err)
 		os.Exit(1)
@@ -29,15 +34,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var clocker Clocker
+	var clocker clients.Clocker
 	switch cfg.ClockingPlatform {
 	case "myteam2go":
 		clocker = clockers.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password, cfg.Latitude, cfg.Longitude)
 	default:
-		clocker = &DummyClocker{}
+		clocker = &clients.DummyClocker{}
 	}
 
-	Run(ctx, cfg, clocker)
+	core.Run(ctx, cfg, clocker)
 
 	slog.Info("Application shut down gracefully")
 }

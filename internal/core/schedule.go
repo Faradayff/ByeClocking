@@ -1,13 +1,15 @@
-package main
+package core
 
 import (
 	"log/slog"
 	"math/rand"
 	"time"
+
+	"github.com/Faradayff/ByeClocking/internal/config"
 )
 
 // randomizeHours generates the specific execution times for today's clock actions, applying unpunctuality delays.
-func randomizeHours(cfg *Config) (clockInTime time.Time, lunchTime time.Time, lunchFinishTime time.Time, clockOutTime time.Time, hasLunch bool) {
+func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.Time, lunchFinishTime time.Time, clockOutTime time.Time, hasLunch bool) {
 	slog.Debug("Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
@@ -43,7 +45,7 @@ func randomizeHours(cfg *Config) (clockInTime time.Time, lunchTime time.Time, lu
 }
 
 // initDelays calculates the random delay durations for each clocking action based on the configuration limits.
-func initDelays(cfg *Config) (clockInDelay time.Duration, lunchDelay time.Duration, lunchDuration time.Duration, clockOutDelay time.Duration) {
+func initDelays(cfg *config.Config) (clockInDelay time.Duration, lunchDelay time.Duration, lunchDuration time.Duration, clockOutDelay time.Duration) {
 	if cfg.Unpunctuality > 0 {
 		clockInDelay = time.Duration(rand.Intn(cfg.Unpunctuality)) * time.Minute
 		clockOutDelay = time.Duration(rand.Intn(cfg.LeaveUnpunctuality))*time.Minute + clockInDelay
