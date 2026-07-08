@@ -13,7 +13,7 @@ const (
 )
 
 // InitLogging configures the slog logger with the specified log level and sets up file output.
-func InitLogging(loglevel string) {
+func InitLogging(loglevel string) func() {
 	opts := &slog.HandlerOptions{}
 
 	switch loglevel {
@@ -39,7 +39,6 @@ func InitLogging(loglevel string) {
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
-	defer logFile.Close()
 
 	var handler slog.Handler
 	if loglevel == "DEBUG" {
@@ -51,4 +50,10 @@ func InitLogging(loglevel string) {
 
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
+
+	return func() {
+		if err := logFile.Close(); err != nil {
+			log.Printf("Failed to close log file: %v", err)
+		}
+	}
 }
