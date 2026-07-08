@@ -24,7 +24,8 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 	if isSummer {
 		clockIn = cfg.SummerTimes[0].Time
 		clockOut = cfg.SummerTimes[1].Time
-		slog.Info("Using summer times", "clockIn", clockIn, "clockOut", clockOut)
+		slog.Info("We are in summer time")
+		slog.Debug("Using summer times", "clockIn", clockIn, "clockOut", clockOut)
 	} else {
 		clockIn = cfg.ClockIn.Time
 		clockOut = cfg.ClockOut.Time
@@ -68,16 +69,16 @@ func isSummerTime(period []string) bool {
 		return false
 	}
 
-	// Format is "DD/MM" - mapped to "02/01" in Go's reference time format
-	start, err := time.Parse("02/01", period[0])
+	// Format allows "D/M", "DD/M", "D/MM", or "DD/MM" - mapped to "2/1" in Go's reference time format
+	start, err := time.Parse("2/1", period[0])
 	if err != nil {
-		slog.Warn("Invalid summer period format, expected DD/MM", "period", period[0])
+		slog.Warn("Invalid summer period format, expected DD/MM or D/M", "period", period[0])
 		return false
 	}
 
-	end, err := time.Parse("02/01", period[1])
+	end, err := time.Parse("2/1", period[1])
 	if err != nil {
-		slog.Warn("Invalid summer period format, expected DD/MM", "period", period[1])
+		slog.Warn("Invalid summer period format, expected DD/MM or D/M", "period", period[1])
 		return false
 	}
 
