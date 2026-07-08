@@ -62,7 +62,7 @@ type Config struct {
 
 // LoadConfig reads, parses, and validates the configuration from the specified JSON file.
 func LoadConfig(filePath string) (*Config, error) {
-	slog.Debug("Getting config from file")
+	slog.Debug("📂 Getting config from file")
 
 	file, err := os.ReadFile(filePath)
 	if err != nil {
@@ -78,7 +78,7 @@ func LoadConfig(filePath string) (*Config, error) {
 		return nil, err
 	}
 
-	slog.Debug("Config loaded", "cfg", cfg)
+	slog.Debug("📋 Config loaded", "cfg", cfg)
 
 	return &cfg, nil
 }
@@ -112,7 +112,7 @@ func (cfg *Config) validateRequiredFields() error {
 		}
 	}
 	if cfg.Latitude == 0 && cfg.Longitude == 0 {
-		slog.Info("No location configured (latitude/longitude are 0). Clock-in will simulate a browser that denied geolocation")
+		slog.Info("📍 No location configured (latitude/longitude are 0). Clock-in will simulate a browser that denied geolocation")
 	}
 
 	return nil
@@ -120,7 +120,7 @@ func (cfg *Config) validateRequiredFields() error {
 
 // requiredStringError logs and returns an error for a missing required string field.
 func requiredStringError(displayName, errorName string) error {
-	slog.Error(displayName + " is empty. Stopping")
+	slog.Error("❌ " + displayName + " is empty. Stopping")
 	return errors.New(errorName + " is empty")
 }
 
@@ -130,7 +130,7 @@ func (cfg *Config) normalizeUnpunctuality() {
 		return
 	}
 
-	slog.Warn("Unpunctuality is negative. Setting it to zero")
+	slog.Warn("⚠️ Unpunctuality is negative. Setting it to zero")
 	cfg.Unpunctuality = 0
 }
 
@@ -140,7 +140,7 @@ func (cfg *Config) normalizeLeaveUnpunctuality() {
 		return
 	}
 
-	slog.Warn("Leave Unpunctuality is negative. Setting it to zero")
+	slog.Warn("⚠️ Leave Unpunctuality is negative. Setting it to zero")
 	cfg.LeaveUnpunctuality = 0
 }
 
@@ -153,20 +153,20 @@ func (cfg *Config) validateLunchSettings() {
 	}
 
 	if cfg.MaxTimeToLunch <= 0 {
-		slog.Warn("Max time to lunch is 0 or negative. Disabling Lunch Time", "maxTimeToLunch", cfg.MaxTimeToLunch)
+		slog.Warn("⚠️ Max time to lunch is 0 or negative. Disabling Lunch Time", "maxTimeToLunch", cfg.MaxTimeToLunch)
 		cfg.Lunchtime = nil
 		return
 	}
 
 	if cfg.MinTimeToLunch < minimumLunchDuration {
-		slog.Error("Min time to lunch can't be less than 1. Disabling Lunch Time", "minTimeToLunch", cfg.MinTimeToLunch)
+		slog.Error("❌ Min time to lunch can't be less than 1. Disabling Lunch Time", "minTimeToLunch", cfg.MinTimeToLunch)
 		cfg.Lunchtime = nil
 		return
 	}
 
 	if cfg.MinTimeToLunch > cfg.MaxTimeToLunch {
 		slog.Warn(
-			"Min time to lunch is greater than max time to lunch, switching values",
+			"⚠️ Min time to lunch is greater than max time to lunch, switching values",
 			"minTimeToLunch", cfg.MinTimeToLunch,
 			"maxTimeToLunch", cfg.MaxTimeToLunch,
 		)
@@ -180,20 +180,20 @@ func (cfg *Config) normalizeLunchUnpunctuality() {
 		return
 	}
 
-	slog.Warn("Lunch unpunctuality is negative. Setting it to zero")
+	slog.Warn("⚠️ Lunch unpunctuality is negative. Setting it to zero")
 	cfg.LunchUnpunctuality = 0
 }
 
 // validateSummerSettings verifies the summer period and times configuration for validity.
 func (cfg *Config) validateSummerSettings() {
 	if len(cfg.SummerPeriod) != 2 || cfg.SummerPeriod[0] == "" || cfg.SummerPeriod[1] == "" {
-		slog.Warn("Summer period hasn't two dates. Disabling it")
+		slog.Warn("☀️ Summer period hasn't two dates. Disabling it")
 		cfg.SummerPeriod = nil
 		return
 	}
 
 	if len(cfg.SummerPeriod) > 0 && len(cfg.SummerTimes) == 0 {
-		slog.Warn("Summer period is set but summer times are empty. Disabling summer period", "summerPeriod", cfg.SummerPeriod)
+		slog.Warn("☀️ Summer period is set but summer times are empty. Disabling summer period", "summerPeriod", cfg.SummerPeriod)
 		cfg.SummerPeriod = nil
 	}
 }

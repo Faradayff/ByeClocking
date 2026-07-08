@@ -13,74 +13,74 @@ import (
 func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 	for {
 		if now := time.Now().Weekday(); now == time.Saturday || now == time.Sunday {
-			slog.Info("It is the weekend, skipping clocking today")
+			slog.Info("🏖️ Today is weekend, skipping clocking")
 			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
 				break
 			}
 			continue
 		}
 
-		slog.Info("Starting the day")
+		slog.Info("🌅 Starting the day")
 		clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch := randomizeHours(cfg)
 
-		slog.Debug("Waiting to clock in")
+		slog.Debug("🔐 Waiting to clock in")
 		if toClock, err := waitUntil(ctx, clockInTime); err != nil {
 			break
 		} else if toClock {
-			slog.Info("Clock in time")
+			slog.Info("✅ Clock in time")
 			err := clocker.ClockIn(ctx)
 			if err != nil {
-				slog.Error("Failed to clock in", "error", err)
+				slog.Error("❌ Failed to clock in", "error", err)
 				break
 			}
 		} else {
-			slog.Info("Skipped clock in (missed event)")
+			slog.Info("⏭️ Skipped clock in (missed event)")
 		}
 
 		if hasLunch {
-			slog.Debug("Waiting to go to lunch")
+			slog.Debug("🍴 Waiting to go to lunch")
 			if toClock, err := waitUntil(ctx, lunchTime); err != nil {
 				break
 			} else if toClock {
-				slog.Info("Lunch time")
+				slog.Info("⏸️ Lunch time")
 				err := clocker.ClockPause(ctx)
 				if err != nil {
-					slog.Error("Error when clocking pause for lunch", "error", err)
+					slog.Error("❌ Error when clocking pause for lunch", "error", err)
 					break
 				}
 			} else {
-				slog.Info("Skipped lunch time (missed event)")
+				slog.Info("⏭️ Skipped lunch time (missed event)")
 			}
 
-			slog.Debug("Waiting to go back from lunch")
+			slog.Debug("🍽️ Waiting to go back from lunch")
 			if toClock, err := waitUntil(ctx, lunchFinishTime); err != nil {
 				break
 			} else if toClock {
-				slog.Info("Back from lunch time")
+				slog.Info("▶️ Back from lunch time")
 				err := clocker.ClockResume(ctx)
 				if err != nil {
-					slog.Error("Error when clocking resume", "error", err)
+					slog.Error("❌ Error when clocking resume", "error", err)
 					break
 				}
 			} else {
-				slog.Info("Skipped back from lunch time (missed event)")
+				slog.Info("⏭️ Skipped back from lunch time (missed event)")
 			}
 		} else {
-			slog.Info("Summer time. Skipping lunch break")
+			slog.Info("🌞 Summer time. Skipping lunch break")
 		}
 
-		slog.Debug("Waiting to clock out")
+		slog.Debug("🔐 Waiting to clock out")
 		if toClock, err := waitUntil(ctx, clockOutTime); err != nil {
 			break
 		} else if toClock {
-			slog.Info("Clock out time")
+			slog.Info("🏁 Clock out time")
 			err := clocker.ClockOut(ctx)
 			if err != nil {
-				slog.Error("Error when clocking out", "error", err)
+				slog.Error("❌ Error when clocking out", "error", err)
 				break
 			}
 		} else {
-			slog.Info("Skipped clock out (missed event)")
+			slog.Info("⏭️ Skipped clock out (missed event)")
 		}
 
 		if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
@@ -96,14 +96,14 @@ func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 
 	// If the event is more than 30 minutes in the past, consider it missed and skip it.
 	if timeToClock < -30*time.Minute {
-		slog.Debug("Time to clock was way before, skipping it", "timeToClock", timeToClock.Round(time.Minute))
+		slog.Debug("⏭️ Time to clock was way before, skipping it", "timeToClock", timeToClock.Round(time.Minute))
 		return false, nil
 	} else if timeToClock <= 0 { // If it's slightly in the past (e.g., up to 30 mins), execute immediately
-		slog.Debug("Time to clock was just a moment ago, clocking", "timeToClock", timeToClock.Round(time.Minute))
+		slog.Debug("⏱️ Time to clock was just a moment ago, clocking", "timeToClock", timeToClock.Round(time.Minute))
 		return true, nil
 	}
 
-	slog.Debug("Waiting until time", "duration", timeToClock.Round(time.Minute))
+	slog.Debug("🕒 Waiting until time", "duration", timeToClock.Round(time.Minute))
 	timer := time.NewTimer(timeToClock)
 	defer timer.Stop()
 
@@ -120,7 +120,7 @@ func waitUntilTomorrow(ctx context.Context, clockIn time.Time) error {
 	now := time.Now()
 	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, clockIn.Hour(), clockIn.Minute(), clockIn.Second(), clockIn.Nanosecond(), now.Location())
 	wakeUpTime := time.Until(tomorrow) - time.Hour
-	slog.Debug("Waiting until tomorrow", "duration", wakeUpTime.Round(time.Minute))
+	slog.Debug("🌙 Waiting until tomorrow", "duration", wakeUpTime.Round(time.Minute))
 
 	if wakeUpTime <= 0 {
 		return nil

@@ -58,21 +58,21 @@ var (
 // ClockIn sends a clock-in request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 	if err := c.login(ctx); err != nil {
-		slog.Error("Error logging in. Impossible to clock in", "error", err)
+		slog.Error("❌ Error logging in. Impossible to clock in", "error", err)
 		return err
 	}
 
 	isReadyTo, err := c.isReadyTo(ctx, actionClockIn)
 	if err != nil {
-		slog.Warn("Could not verify clock-in status before attempting", "error", err)
+		slog.Warn("⚠️ Could not verify clock-in status before attempting", "error", err)
 	}
 	if !isReadyTo {
-		slog.Debug("Already clocked in, skipping")
+		slog.Debug("⏭️ Already clocked in, skipping")
 		return nil
 	}
 
 	if err := c.submitWorkAssistance(ctx, actionClockIn); err != nil {
-		slog.Error("Clock-in failed", "error", err)
+		slog.Error("❌ Clock-in failed", "error", err)
 		return err
 	}
 
@@ -85,28 +85,28 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 		return fmt.Errorf("clock-in submitted but isReadyToClockOut still reports false")
 	}
 
-	slog.Debug("Clock-in confirmed successfully")
+	slog.Debug("✅ Clock-in confirmed successfully")
 	return nil
 }
 
 // ClockOut sends a clock-out request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockOut(ctx context.Context) error {
 	if err := c.login(ctx); err != nil {
-		slog.Error("Error logging in. Impossible to clock out", "error", err)
+		slog.Error("❌ Error logging in. Impossible to clock out", "error", err)
 		return err
 	}
 
 	isReadyTo, err := c.isReadyTo(ctx, actionClockOut)
 	if err != nil {
-		slog.Warn("Could not verify clock-in status before attempting", "error", err)
+		slog.Warn("⚠️ Could not verify clock-in status before attempting", "error", err)
 	}
 	if !isReadyTo {
-		slog.Debug("Already clocked out, skipping")
+		slog.Debug("⏭️ Already clocked out, skipping")
 		return nil
 	}
 
 	if err := c.submitWorkAssistance(ctx, actionClockOut); err != nil {
-		slog.Error("Clock-out failed", "error", err)
+		slog.Error("❌ Clock-out failed", "error", err)
 		return err
 	}
 
@@ -119,28 +119,28 @@ func (c *MyTeam2GoClocker) ClockOut(ctx context.Context) error {
 		return fmt.Errorf("clock-out submitted but isReadyToClockOut still reports true")
 	}
 
-	slog.Debug("Clock-out submitted successfully")
+	slog.Debug("✅ Clock-out submitted successfully")
 	return nil
 }
 
 // ClockPause sends a lunch-pause request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockPause(ctx context.Context) error {
 	if err := c.login(ctx); err != nil {
-		slog.Error("Error logging in. Impossible to clock pause", "error", err)
+		slog.Error("❌ Error logging in. Impossible to clock pause", "error", err)
 		return err
 	}
 
 	isReadyTo, err := c.isReadyTo(ctx, actionPause)
 	if err != nil {
-		slog.Warn("Could not verify clock-in status before attempting", "error", err)
+		slog.Warn("⚠️ Could not verify clock-in status before attempting", "error", err)
 	}
 	if !isReadyTo {
-		slog.Debug("Already in pause, skipping")
+		slog.Debug("⏭️ Already in pause, skipping")
 		return nil
 	}
 
 	if err := c.submitWorkAssistance(ctx, actionPause); err != nil {
-		slog.Error("Clock-pause failed", "error", err)
+		slog.Error("❌ Clock-pause failed", "error", err)
 		return err
 	}
 
@@ -153,28 +153,28 @@ func (c *MyTeam2GoClocker) ClockPause(ctx context.Context) error {
 		return fmt.Errorf("clock-pause submitted but isReadyToResume still reports false")
 	}
 
-	slog.Debug("Clock-pause submitted successfully")
+	slog.Debug("✅ Clock-pause submitted successfully")
 	return nil
 }
 
 // ClockResume sends a resume-from-lunch request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	if err := c.login(ctx); err != nil {
-		slog.Error("Error logging in. Impossible to clock resume", "error", err)
+		slog.Error("❌ Error logging in. Impossible to clock resume", "error", err)
 		return err
 	}
 
 	isReadyTo, err := c.isReadyTo(ctx, actionResume)
 	if err != nil {
-		slog.Warn("Could not verify clock-resume status before attempting", "error", err)
+		slog.Warn("⚠️ Could not verify clock-resume status before attempting", "error", err)
 	}
 	if !isReadyTo {
-		slog.Debug("Already clocked back, skipping")
+		slog.Debug("⏭️ Already clocked back, skipping")
 		return nil
 	}
 
 	if err := c.submitWorkAssistance(ctx, actionResume); err != nil {
-		slog.Error("Clock-resume failed", "error", err)
+		slog.Error("❌ Clock-resume failed", "error", err)
 		return err
 	}
 
@@ -187,7 +187,7 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 		return fmt.Errorf("clock-resume submitted but isReadyToClockOut still reports false")
 	}
 
-	slog.Debug("Clock-resume submitted successfully")
+	slog.Debug("✅ Clock-resume submitted successfully")
 	return nil
 }
 
@@ -241,7 +241,7 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	}
 	if newViewState != "" {
 		viewState = newViewState
-		slog.Debug("ViewState updated from menu response")
+		slog.Debug("🔄 ViewState updated from menu response")
 	}
 
 	// ── Extract Guardar button name ───────────────────────────────────────────
@@ -265,7 +265,7 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 		}
 	}
 	optValue := optMatches[1]
-	slog.Debug("Resolved action parameters", "action", action.logVerb, "btnName", btnName, "optionField", action.optionField, "optValue", optValue)
+	slog.Debug("🔍 Resolved action parameters", "action", action.logVerb, "btnName", btnName, "optionField", action.optionField, "optValue", optValue)
 
 	// ── Step 2: Simulate the change event on the dropdown ─────────────────────
 	time.Sleep(300 * time.Millisecond)
@@ -298,12 +298,12 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	}
 	changeBytes, _ := io.ReadAll(changeResp.Body)
 	changeHtml := string(changeBytes)
-	slog.Debug("Change event response", "body", changeHtml)
+	slog.Debug("🌐 Change event response", "body", changeHtml)
 	changeResp.Body.Close()
 
 	if vs := extractViewState(changeHtml); vs != "" {
 		viewState = vs
-		slog.Debug("ViewState updated from change response")
+		slog.Debug("🔄 ViewState updated from change response")
 	}
 
 	// NOTE: We intentionally skip the updateLocationForm intermediate request.
@@ -327,7 +327,7 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	submitData.Set("workAssistanceForm:locationError", locationErr)
 	submitData.Set("jakarta.faces.ViewState", viewState)
 
-	slog.Debug("Submitting Guardar", "action", action.logVerb, "viewState", viewState, "btnName", btnName, "optValue", optValue)
+	slog.Debug("📤 Submitting Guardar", "action", action.logVerb, "viewState", viewState, "btnName", btnName, "optValue", optValue)
 
 	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(submitData.Encode()))
 	if err != nil {
@@ -347,7 +347,7 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 
 	respBody, _ := io.ReadAll(postResp.Body)
 	respStr := string(respBody)
-	slog.Debug("Guardar response", "action", action.logVerb, "body", respStr)
+	slog.Debug("🌐 Guardar response", "action", action.logVerb, "body", respStr)
 
 	if strings.Contains(respStr, "No se ha podido efectuar") {
 		return fmt.Errorf("%s rejected by server: no se ha podido efectuar el registro", action.logVerb)
@@ -371,7 +371,7 @@ func (c *MyTeam2GoClocker) login(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	slog.Debug("Attempting login to MyTeam2Go", "url", loginURL, "username", c.username)
+	slog.Debug("🔑 Attempting login to MyTeam2Go", "url", loginURL, "username", c.username)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -398,7 +398,7 @@ func (c *MyTeam2GoClocker) login(ctx context.Context) error {
 		return fmt.Errorf("login failed: JSESSIONID cookie not found")
 	}
 
-	slog.Debug("Login successful", "JSESSIONID", token)
+	slog.Debug("🔓 Login successful", "JSESSIONID", token)
 	return nil
 }
 
@@ -445,7 +445,7 @@ func (c *MyTeam2GoClocker) isReadyTo(ctx context.Context, status workAssistanceA
 		}
 	}
 
-	slog.Debug("Clock status checked", "status", status.optionLabel, "isReadyTo", isReadyTo)
+	slog.Debug("🔎 Clock status checked", "status", status.optionLabel, "isReadyTo", isReadyTo)
 	return isReadyTo, nil
 }
 
@@ -457,7 +457,7 @@ func (c *MyTeam2GoClocker) loadWorkAssistanceMenu(ctx context.Context, html, hom
 		return "", "", fmt.Errorf("could not find 'Mi control horario' topbar button")
 	}
 	menuID := menuMatches[1]
-	slog.Debug("Found topbar menu button", "menuID", menuID)
+	slog.Debug("🔗 Found topbar menu button", "menuID", menuID)
 
 	menuData := url.Values{}
 	menuData.Set("jakarta.faces.partial.ajax", "true")
