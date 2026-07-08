@@ -1,10 +1,4 @@
 {
-  "clocking_platform": "",
-  "account": "",
-  "password": "",
-  "company_name": "",
-  "latitude": 0.0,
-  "longitude": 0.0,
   "clock_in": "08:00",
   "clock_out": "17:00",
   "unpunctuality": 10,
@@ -13,6 +7,20 @@
   "min_time_to_lunch": 15,
   "max_time_to_lunch": 40,
   "lunch_unpunctuality": 60,
-  "summer_times": [],
-  "summer_period": []
+  "summer_times": [
+    "8:00",
+    "15:00"
+  ],
+  "summer_period": [
+    "01/07",
+    "31/08"
+  ],
+  "latitude": 0.0,
+  "longitude": 0.0,
+  "clocking_platform": "",
+  "myteam2go": {
+    "company_name": "",
+    "account": "",
+    "password": ""
+  }
 }

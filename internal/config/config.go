@@ -36,23 +36,28 @@ func (ct *ClockTime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ct.Format("15:04"))
 }
 
+// MyTeam2GoConfig holds MyTeam2Go-specific settings.
+type MyTeam2GoConfig struct {
+	CompanyName string `json:"company_name"`
+	Account     string `json:"account"`
+	Password    string `json:"password"`
+}
+
 type Config struct {
-	ClockingPlatform   string      `json:"clocking_platform"`
-	Account            string      `json:"account"`
-	Password           string      `json:"password"`
-	CompanyName        string      `json:"company_name"`
-	Latitude           float64     `json:"latitude"`
-	Longitude          float64     `json:"longitude"`
-	ClockIn            ClockTime   `json:"clock_in"`
-	ClockOut           ClockTime   `json:"clock_out"`
-	Unpunctuality      int         `json:"unpunctuality"`
-	LeaveUnpunctuality int         `json:"leave_unpunctuality"`
-	Lunchtime          *ClockTime  `json:"lunchtime"`
-	MinTimeToLunch     int         `json:"min_time_to_lunch"`
-	MaxTimeToLunch     int         `json:"max_time_to_lunch"`
-	LunchUnpunctuality int         `json:"lunch_unpunctuality"`
-	SummerTimes        []ClockTime `json:"summer_times"`
-	SummerPeriod       []string    `json:"summer_period"`
+	ClockIn            ClockTime       `json:"clock_in"`
+	ClockOut           ClockTime       `json:"clock_out"`
+	Unpunctuality      int             `json:"unpunctuality"`
+	LeaveUnpunctuality int             `json:"leave_unpunctuality"`
+	Lunchtime          *ClockTime      `json:"lunchtime"`
+	MinTimeToLunch     int             `json:"min_time_to_lunch"`
+	MaxTimeToLunch     int             `json:"max_time_to_lunch"`
+	LunchUnpunctuality int             `json:"lunch_unpunctuality"`
+	SummerTimes        []ClockTime     `json:"summer_times"`
+	SummerPeriod       []string        `json:"summer_period"`
+	Latitude           float64         `json:"latitude"`
+	Longitude          float64         `json:"longitude"`
+	ClockingPlatform   string          `json:"clocking_platform"`
+	MyTeam2Go          MyTeam2GoConfig `json:"myteam2go,omitempty"`
 }
 
 // LoadConfig reads, parses, and validates the configuration from the specified JSON file.
@@ -98,14 +103,13 @@ func (cfg *Config) validateRequiredFields() error {
 	if cfg.ClockingPlatform == "" {
 		return requiredStringError("Clocking platform", "clocking platform")
 	}
-	if cfg.Account == "" {
-		return requiredStringError("Account", "account")
-	}
-	if cfg.Password == "" {
-		return requiredStringError("Password", "password")
-	}
-	if cfg.CompanyName == "" {
-		return requiredStringError("Company name", "company name")
+	if strings.ToLower(cfg.ClockingPlatform) == "myteam2go" {
+		if cfg.MyTeam2Go.Account == "" || cfg.MyTeam2Go.Password == "" {
+			return requiredStringError("Factorial API key", "factorial.api_key")
+		}
+		if cfg.MyTeam2Go.CompanyName == "" {
+			return requiredStringError("Company name", "company name")
+		}
 	}
 	if cfg.Latitude == 0 && cfg.Longitude == 0 {
 		slog.Info("No location configured (latitude/longitude are 0). Clock-in will simulate a browser that denied geolocation")

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Faradayff/ByeClocking/internal/clients"
@@ -30,18 +31,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	clocker := buildClocker(cfg)
+	slog.Info("Using clocking platform", "platform", cfg.ClockingPlatform)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	var clocker clients.Clocker
-	switch cfg.ClockingPlatform {
-	case "myteam2go":
-		clocker = clients.NewMyTeam2GoClocker(cfg.CompanyName, cfg.Account, cfg.Password, cfg.Latitude, cfg.Longitude)
-	default:
-		clocker = &clients.DummyClocker{}
-	}
 
 	core.Run(ctx, cfg, clocker)
 
 	slog.Info("Application shut down gracefully")
+}
+
+// buildClocker creates the appropriate Clocker implementation based on the configured platform.
+func buildClocker(cfg *config.Config) clients.Clocker {
+	switch strings.ToLower(cfg.ClockingPlatform) {
+	case "myteam2go":
+		slog.Debug("Initialising MyTeam2Go clocker")
+		return clients.NewMyTeam2GoClocker(cfg.MyTeam2Go.CompanyName, cfg.MyTeam2Go.Account, cfg.MyTeam2Go.Password, cfg.Latitude, cfg.Longitude)
+	default:
+		slog.Warn("Unknown clocking platform, using DummyClocker", "platform", cfg.ClockingPlatform)
+		return &clients.DummyClocker{}
+	}
 }
