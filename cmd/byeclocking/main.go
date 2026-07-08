@@ -19,7 +19,8 @@ func main() {
 	logLevel := flag.String("loglevel", "DEBUG", "Log level: DEBUG, INFO, WARN or ERROR")
 	flag.Parse()
 
-	logger.InitLogging(*logLevel)
+	closeLogger := logger.InitLogging(*logLevel)
+	defer closeLogger()
 
 	slog.Info("Starting application")
 
