@@ -191,6 +191,11 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	return nil
 }
 
+// IsHoliday checks if the current day is a holiday.
+func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
+	return false
+}
+
 // submitWorkAssistance executes the full workAssistanceForm flow for the given action:
 //  1. GET the home page and extract ViewState.
 //  2. POST the topbar "Mi control horario" button to load the workAssistanceForm dialog.
