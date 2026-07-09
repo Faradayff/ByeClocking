@@ -191,6 +191,132 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	return nil
 }
 
+// IsHoliday checks if the current day is a vacation day by inspecting the approved
+// vacation requests shown on the MyTeam2Go home page.
+// The vacation calendar panel is loaded dynamically via AJAX, so after fetching the
+// initial home page we trigger the calendar panel the same way the browser does.
+func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
+	if err := c.login(ctx); err != nil {
+		slog.Error("❌ IsHoliday: login failed, assuming not a holiday", "error", err)
+		return false
+	}
+
+	homeURL := c.baseURL + "/home.xhtml"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
+	if err != nil {
+		slog.Error("❌ IsHoliday: failed to create request", "error", err)
+		return false
+	}
+	c.setBrowserHeaders(req, c.baseURL+"/")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		slog.Error("❌ IsHoliday: failed to fetch home page", "error", err)
+		return false
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	homeHTML := string(bodyBytes)
+
+	today := time.Now()
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
+
+	vacationRegex := regexp.MustCompile(`Vacaciones del\s+(\d{2}/\d{2}/\d{4})\s+a\s+(\d{2}/\d{2}/\d{4})`)
+
+	// The calendar section is rendered via a JSF AJAX partial request.
+	// Find the calendar topbar button (e.g. topMenuIdForm:menuCalendar...) and trigger it.
+	calendarHTML, err := c.loadCalendarPanel(ctx, homeHTML, homeURL)
+	if err != nil {
+		slog.Warn("⚠️ IsHoliday: could not load calendar panel via AJAX, falling back to home HTML", "error", err)
+		calendarHTML = homeHTML
+	}
+
+	matches := vacationRegex.FindAllStringSubmatch(calendarHTML, -1)
+	slog.Debug("🏖️ IsHoliday: vacation matches found", "count", len(matches), "matches", matches)
+
+	for _, m := range matches {
+		startDate, err1 := time.ParseInLocation("02/01/2006", m[1], today.Location())
+		endDate, err2 := time.ParseInLocation("02/01/2006", m[2], today.Location())
+		if err1 != nil || err2 != nil {
+			slog.Warn("⚠️ IsHoliday: failed to parse vacation dates", "start", m[1], "end", m[2])
+			continue
+		}
+		if !todayDate.Before(startDate) && !todayDate.After(endDate) {
+			slog.Info("🏖️ IsHoliday: today is within an approved vacation period", "start", m[1], "end", m[2])
+			return true
+		}
+	}
+
+	slog.Debug("✅ IsHoliday: no vacation period matches today")
+	return false
+}
+
+// loadCalendarPanel triggers the calendar widget on the MyTeam2Go home page via a JSF
+// partial-AJAX request. The browser fires this automatically on page load via the
+// JavaScript function loadCalendaryWidget(), which is defined in a <script> tag like:
+//
+//	<script id="homePartialLoadings:j_idtXXXX">
+//	    loadCalendaryWidget = function() {
+//	        return PrimeFaces.ab({s:"homePartialLoadings:j_idtXXXX", f:"homePartialLoadings",
+//	                              u:"homeForm:calendarWidgetContent", a:true, ...});
+//	    }
+//	</script>
+//
+// We extract the dynamic source ID from that script and fire the equivalent POST.
+func (c *MyTeam2GoClocker) loadCalendarPanel(ctx context.Context, homeHTML, homeURL string) (string, error) {
+	// ViewState helpers (same as in submitWorkAssistance).
+	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	viewStateCDATARegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^]]+)]]></update>`)
+	extractViewState := func(body string) string {
+		if m := viewStateRegex.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+		if m := viewStateCDATARegex.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+		return ""
+	}
+
+	viewState := extractViewState(homeHTML)
+	if viewState == "" {
+		return "", fmt.Errorf("could not find ViewState on home page")
+	}
+
+	// Find the source component ID for loadCalendaryWidget.
+	// The page contains a script like:
+	//   loadCalendaryWidget = function() {return PrimeFaces.ab({s:"homePartialLoadings:j_idtXXXX",...});}
+	calendarSrcRegex := regexp.MustCompile(`loadCalendaryWidget\s*=\s*function[^{]*\{[^}]*s:\s*"(homePartialLoadings:[^"]+)"`)
+	srcMatches := calendarSrcRegex.FindStringSubmatch(homeHTML)
+	if len(srcMatches) < 2 {
+		return "", fmt.Errorf("could not find loadCalendaryWidget source ID in home HTML")
+	}
+	srcID := srcMatches[1]
+
+	menuData := url.Values{}
+	menuData.Set("jakarta.faces.partial.ajax", "true")
+	menuData.Set("jakarta.faces.source", srcID)
+	menuData.Set("jakarta.faces.partial.execute", srcID)
+	menuData.Set("jakarta.faces.partial.render", "homeForm:calendarWidgetContent")
+	menuData.Set(srcID, srcID)
+	menuData.Set("homePartialLoadings", "homePartialLoadings")
+	menuData.Set("jakarta.faces.ViewState", viewState)
+
+	menuReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(menuData.Encode()))
+	menuReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	menuReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+	menuReq.Header.Set("Faces-Request", "partial/ajax")
+	menuReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	c.setBrowserHeaders(menuReq, c.baseURL+"/home")
+
+	menuResp, err := c.client.Do(menuReq)
+	if err != nil {
+		return "", fmt.Errorf("AJAX request for calendar panel failed: %w", err)
+	}
+	defer menuResp.Body.Close()
+	menuBytes, _ := io.ReadAll(menuResp.Body)
+	return string(menuBytes), nil
+}
+
 // submitWorkAssistance executes the full workAssistanceForm flow for the given action:
 //  1. GET the home page and extract ViewState.
 //  2. POST the topbar "Mi control horario" button to load the workAssistanceForm dialog.

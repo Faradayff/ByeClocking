@@ -20,6 +20,14 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			continue
 		}
 
+		if clocker.IsHoliday(ctx) {
+			slog.Info("🎉 Today is holiday, skipping clocking")
+			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+				break
+			}
+			continue
+		}
+
 		slog.Info("🌅 Starting the day")
 		clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch := randomizeHours(cfg)
 

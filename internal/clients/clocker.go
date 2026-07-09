@@ -10,6 +10,7 @@ type Clocker interface {
 	ClockPause(ctx context.Context) error
 	ClockResume(ctx context.Context) error
 	ClockOut(ctx context.Context) error
+	IsHoliday(ctx context.Context) bool
 }
 
 type DummyClocker struct{}
@@ -36,4 +37,9 @@ func (d *DummyClocker) ClockResume(context.Context) error {
 func (d *DummyClocker) ClockOut(context.Context) error {
 	slog.Debug("🏁 Action: Clock Out")
 	return nil
+}
+
+// IsHoliday checks if the current day is a holiday.
+func (d *DummyClocker) IsHoliday(context.Context) bool {
+	return false
 }
