@@ -10,7 +10,7 @@ import (
 
 // randomizeHours generates the specific execution times for today's clock actions, applying unpunctuality delays.
 func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.Time, lunchFinishTime time.Time, clockOutTime time.Time, hasLunch bool) {
-	slog.Debug("Setting up delays and times")
+	slog.Debug("⚙️ Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
 	now := time.Now()
@@ -24,8 +24,8 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 	if isSummer {
 		clockIn = cfg.SummerTimes[0].Time
 		clockOut = cfg.SummerTimes[1].Time
-		slog.Info("We are in summer time")
-		slog.Debug("Using summer times", "clockIn", clockIn, "clockOut", clockOut)
+		slog.Info("🌞 We are in summer time")
+		slog.Debug("🌴 Using summer times", "clockIn", clockIn, "clockOut", clockOut)
 	} else {
 		clockIn = cfg.ClockIn.Time
 		clockOut = cfg.ClockOut.Time
@@ -41,7 +41,7 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 		lunchFinishTime = lunchTime.Add(lunchDuration)
 	}
 
-	slog.Debug("Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
+	slog.Debug("🕒 Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
 	return
 }
 
@@ -56,7 +56,7 @@ func initDelays(cfg *config.Config) (clockInDelay time.Duration, lunchDelay time
 	}
 	lunchDuration = time.Duration(cfg.MinTimeToLunch+rand.Intn(cfg.MaxTimeToLunch-cfg.MinTimeToLunch+1))*time.Minute + lunchDelay
 
-	slog.Debug("Delays initialized", "ClockInDelay", clockInDelay, "lunchDelay", lunchDelay, "lunchDuration", lunchDuration, "clockOutDelay", clockOutDelay)
+	slog.Debug("⏳ Delays initialized", "ClockInDelay", clockInDelay, "lunchDelay", lunchDelay, "lunchDuration", lunchDuration, "clockOutDelay", clockOutDelay)
 	return
 }
 
@@ -72,13 +72,13 @@ func isSummerTime(period []string) bool {
 	// Format allows "D/M", "DD/M", "D/MM", or "DD/MM" - mapped to "2/1" in Go's reference time format
 	start, err := time.Parse("2/1", period[0])
 	if err != nil {
-		slog.Warn("Invalid summer period format, expected DD/MM or D/M", "period", period[0])
+		slog.Warn("⚠️ Invalid summer period format, expected DD/MM or D/M", "period", period[0])
 		return false
 	}
 
 	end, err := time.Parse("2/1", period[1])
 	if err != nil {
-		slog.Warn("Invalid summer period format, expected DD/MM or D/M", "period", period[1])
+		slog.Warn("⚠️ Invalid summer period format, expected DD/MM or D/M", "period", period[1])
 		return false
 	}
 
