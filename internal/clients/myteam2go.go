@@ -37,6 +37,21 @@ func NewMyTeam2GoClocker(company, username, password string, latitude, longitude
 	}
 }
 
+// NewMyTeam2GoTestClocker creates a MyTeam2GoClocker that targets an arbitrary
+// host (scheme + host, e.g. "127.0.0.1:PORT") using the provided http.Client.
+// Intended only for tests; the baseURL is set to "http://<host>" so that a
+// local httptest.Server can be used instead of the real MyTeam2Go website.
+func NewMyTeam2GoTestClocker(host, username, password string, latitude, longitude float64, client *http.Client) *MyTeam2GoClocker {
+	return &MyTeam2GoClocker{
+		baseURL:   "http://" + host,
+		username:  username,
+		password:  password,
+		latitude:  latitude,
+		longitude: longitude,
+		client:    client,
+	}
+}
+
 // workAssistanceAction describes a clock action to submit via the workAssistanceForm.
 type workAssistanceAction struct {
 	// optionLabel is the visible text of the option to select (e.g. "Inicio jornada laboral").
