@@ -1,0 +1,35 @@
+name: PR Tests & Checks
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build, Lint & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Check formatting
+        run: if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then echo "Format issues found. Run 'gofmt -s -w .'"; exit 1; fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          install-mode: goinstall # <--- Cambia "binary" por "goinstall"
+
+      - name: Run Unit & Integration Tests
+        run: go test -v -race -cover ./...
