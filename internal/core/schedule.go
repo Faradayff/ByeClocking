@@ -26,6 +26,11 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 		clockOut = cfg.SummerTimes[1].Time
 		slog.Info("🌞 We are in summer time")
 		slog.Debug("🌴 Using summer times", "clockIn", clockIn, "clockOut", clockOut)
+	} else if now.Weekday() == time.Friday {
+		clockIn = cfg.FridayTimes[0].Time
+		clockOut = cfg.FridayTimes[1].Time
+		slog.Info("🎉 Today is Friday")
+		slog.Debug("📅 Using Friday times", "clockIn", clockIn, "clockOut", clockOut)
 	} else {
 		clockIn = cfg.ClockIn.Time
 		clockOut = cfg.ClockOut.Time

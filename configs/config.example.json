@@ -7,6 +7,10 @@
   "min_time_to_lunch": 15,
   "max_time_to_lunch": 40,
   "lunch_unpunctuality": 60,
+  "friday_times": [
+    "8:00",
+    "15:00"
+  ],
   "summer_times": [
     "8:00",
     "15:00"
