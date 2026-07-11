@@ -52,6 +52,7 @@ type Config struct {
 	MinTimeToLunch     int             `json:"min_time_to_lunch"`
 	MaxTimeToLunch     int             `json:"max_time_to_lunch"`
 	LunchUnpunctuality int             `json:"lunch_unpunctuality"`
+	FridayTimes        []ClockTime     `json:"friday_times"`
 	SummerTimes        []ClockTime     `json:"summer_times"`
 	SummerPeriod       []string        `json:"summer_period"`
 	Latitude           float64         `json:"latitude"`
@@ -93,6 +94,7 @@ func (cfg *Config) validate() error {
 	cfg.normalizeLeaveUnpunctuality()
 	cfg.validateLunchSettings()
 	cfg.normalizeLunchUnpunctuality()
+	cfg.validateFridaySettings()
 	cfg.validateSummerSettings()
 
 	return nil
@@ -195,5 +197,13 @@ func (cfg *Config) validateSummerSettings() {
 	if len(cfg.SummerPeriod) > 0 && len(cfg.SummerTimes) == 0 {
 		slog.Warn("☀️ Summer period is set but summer times are empty. Disabling summer period", "summerPeriod", cfg.SummerPeriod)
 		cfg.SummerPeriod = nil
+	}
+}
+
+// validateFridaySettings verifies the Friday times configuration for validity.
+func (cfg *Config) validateFridaySettings() {
+	if len(cfg.FridayTimes) > 0 && len(cfg.FridayTimes) != 2 {
+		slog.Warn("⚠️ Friday times must have exactly two values. Disabling it", "fridayTimes", cfg.FridayTimes)
+		cfg.FridayTimes = nil
 	}
 }
