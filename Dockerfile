@@ -8,8 +8,9 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download
 
-# Copy the rest of the application source code
-COPY . .
+# Copy only the necessary source code directories for the build
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 
 # Build the application statically
 # CGO_ENABLED=0 ensures a static binary, crucial for minimal containers
