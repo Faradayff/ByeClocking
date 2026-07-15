@@ -36,29 +36,23 @@ func (ct *ClockTime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ct.Format("15:04"))
 }
 
-// MyTeam2GoConfig holds MyTeam2Go-specific settings.
-type MyTeam2GoConfig struct {
-	CompanyName string `json:"company_name"`
-	Account     string `json:"account"`
-	Password    string `json:"password"`
-}
-
+// Config holds the main application configuration.
 type Config struct {
-	ClockIn            ClockTime       `json:"clock_in"`
-	ClockOut           ClockTime       `json:"clock_out"`
-	Unpunctuality      int             `json:"unpunctuality"`
-	LeaveUnpunctuality int             `json:"leave_unpunctuality"`
-	Lunchtime          *ClockTime      `json:"lunchtime"`
-	MinTimeToLunch     int             `json:"min_time_to_lunch"`
-	MaxTimeToLunch     int             `json:"max_time_to_lunch"`
-	LunchUnpunctuality int             `json:"lunch_unpunctuality"`
-	FridayTimes        []ClockTime     `json:"friday_times"`
-	SummerTimes        []ClockTime     `json:"summer_times"`
-	SummerPeriod       []string        `json:"summer_period"`
-	Latitude           float64         `json:"latitude"`
-	Longitude          float64         `json:"longitude"`
-	ClockingPlatform   string          `json:"clocking_platform"`
-	MyTeam2Go          MyTeam2GoConfig `json:"myteam2go,omitempty"`
+	ClockIn            ClockTime         `json:"clock_in"`
+	ClockOut           ClockTime         `json:"clock_out"`
+	Unpunctuality      int               `json:"unpunctuality"`
+	LeaveUnpunctuality int               `json:"leave_unpunctuality"`
+	Lunchtime          *ClockTime        `json:"lunchtime"`
+	MinTimeToLunch     int               `json:"min_time_to_lunch"`
+	MaxTimeToLunch     int               `json:"max_time_to_lunch"`
+	LunchUnpunctuality int               `json:"lunch_unpunctuality"`
+	FridayTimes        []ClockTime       `json:"friday_times"`
+	SummerTimes        []ClockTime       `json:"summer_times"`
+	SummerPeriod       []string          `json:"summer_period"`
+	Latitude           float64           `json:"latitude"`
+	Longitude          float64           `json:"longitude"`
+	ClockingPlatform   string            `json:"clocking_platform"`
+	ClientConfig       map[string]string `json:"-"`
 }
 
 // LoadConfig reads, parses, and validates the configuration from the specified JSON file.
@@ -73,6 +67,17 @@ func LoadConfig(filePath string) (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(file, &cfg); err != nil {
 		return nil, fmt.Errorf("error decoding json: %w", err)
+	}
+
+	cfg.ClientConfig = make(map[string]string)
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "CLIENT_") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) == 2 {
+				key := strings.ToLower(strings.TrimPrefix(parts[0], "CLIENT_"))
+				cfg.ClientConfig[key] = parts[1]
+			}
+		}
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -105,12 +110,13 @@ func (cfg *Config) validateRequiredFields() error {
 	if cfg.ClockingPlatform == "" {
 		return requiredStringError("Clocking platform", "clocking platform")
 	}
-	if strings.ToLower(cfg.ClockingPlatform) == "myteam2go" {
-		if cfg.MyTeam2Go.Account == "" || cfg.MyTeam2Go.Password == "" {
-			return requiredStringError("Factorial API key", "factorial.api_key")
+	switch strings.ToLower(cfg.ClockingPlatform) {
+	case "myteam2go":
+		if cfg.ClientConfig["account"] == "" || cfg.ClientConfig["password"] == "" {
+			return requiredStringError("MyTeam2Go credentials", "client_account/client_password")
 		}
-		if cfg.MyTeam2Go.CompanyName == "" {
-			return requiredStringError("Company name", "company name")
+		if cfg.ClientConfig["company_name"] == "" {
+			return requiredStringError("Company name", "client_company_name")
 		}
 	}
 	if cfg.Latitude == 0 && cfg.Longitude == 0 {

@@ -52,14 +52,17 @@ func TestValidateRequiredFields(t *testing.T) {
 	})
 
 	t.Run("MyTeam2Go Missing Credentials", func(t *testing.T) {
-		cfg := Config{ClockingPlatform: "myteam2go"}
+		cfg := Config{
+			ClockingPlatform: "myteam2go",
+			ClientConfig:     make(map[string]string),
+		}
 		err := cfg.validateRequiredFields()
-		assert.EqualError(t, err, "factorial.api_key is empty")
+		assert.EqualError(t, err, "client_account/client_password is empty")
 
-		cfg.MyTeam2Go.Account = "acc"
-		cfg.MyTeam2Go.Password = "pass"
+		cfg.ClientConfig["account"] = "acc"
+		cfg.ClientConfig["password"] = "pass"
 		err = cfg.validateRequiredFields()
-		assert.EqualError(t, err, "company name is empty")
+		assert.EqualError(t, err, "client_company_name is empty")
 	})
 
 	t.Run("Valid", func(t *testing.T) {

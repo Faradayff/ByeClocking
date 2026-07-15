@@ -47,7 +47,7 @@ func buildClocker(cfg *config.Config) clients.Clocker {
 	switch strings.ToLower(cfg.ClockingPlatform) {
 	case "myteam2go":
 		slog.Debug("🔍 Initialising MyTeam2Go clocker")
-		return clients.NewMyTeam2GoClocker(cfg.MyTeam2Go.CompanyName, cfg.MyTeam2Go.Account, cfg.MyTeam2Go.Password, cfg.Latitude, cfg.Longitude)
+		return clients.NewMyTeam2GoClocker(cfg.ClientConfig["company_name"], cfg.ClientConfig["account"], cfg.ClientConfig["password"], cfg.Latitude, cfg.Longitude)
 	default:
 		slog.Warn("⚠️ Unknown clocking platform, using DummyClocker", "platform", cfg.ClockingPlatform)
 		return &clients.DummyClocker{}
