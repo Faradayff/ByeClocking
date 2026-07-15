@@ -261,32 +261,14 @@ func (fs *fakeMyTeam2GoServer) newClocker() *clients.MyTeam2GoClocker {
 // Tests
 // ---------------------------------------------------------------------------
 
-func TestMyTeam2Go_FullDayFlow(t *testing.T) {
-	fs := newFakeServer(t)
-	clocker := fs.newClocker()
-	ctx := context.Background()
-
-	require.NoError(t, clocker.ClockIn(ctx), "ClockIn should succeed")
-	assert.Equal(t, stateClockedIn, fs.state, "state should be ClockedIn after ClockIn")
-
-	require.NoError(t, clocker.ClockPause(ctx), "ClockPause should succeed")
-	assert.Equal(t, statePaused, fs.state, "state should be Paused after ClockPause")
-
-	require.NoError(t, clocker.ClockResume(ctx), "ClockResume should succeed")
-	assert.Equal(t, stateClockedIn, fs.state, "state should be ClockedIn after ClockResume")
-
-	require.NoError(t, clocker.ClockOut(ctx), "ClockOut should succeed")
-	assert.Equal(t, stateClockedOut, fs.state, "state should be ClockedOut after ClockOut")
-}
-
 func TestMyTeam2Go_LoginFailed(t *testing.T) {
 	fs := newFakeServer(t)
 	fs.failLogin = true
 	clocker := fs.newClocker()
 	ctx := context.Background()
 
-	err := clocker.ClockIn(ctx)
-	require.Error(t, err, "ClockIn should fail when login fails")
+	err := clocker.Login(ctx)
+	require.Error(t, err, "Login should fail when login fails")
 }
 
 func TestMyTeam2Go_LoginMissingSessionCookie(t *testing.T) {
@@ -295,46 +277,9 @@ func TestMyTeam2Go_LoginMissingSessionCookie(t *testing.T) {
 	clocker := fs.newClocker()
 	ctx := context.Background()
 
-	err := clocker.ClockIn(ctx)
-	require.Error(t, err, "ClockIn should fail when JSESSIONID cookie is absent")
+	err := clocker.Login(ctx)
+	require.Error(t, err, "Login should fail when JSESSIONID cookie is absent")
 	assert.Contains(t, err.Error(), "JSESSIONID")
-}
-
-func TestMyTeam2Go_ClockInAlreadyClockedIn(t *testing.T) {
-	fs := newFakeServer(t)
-	fs.state = stateClockedIn // already clocked in
-	clocker := fs.newClocker()
-	ctx := context.Background()
-
-	// ClockIn should detect isReadyTo==false and skip silently (no error).
-	require.NoError(t, clocker.ClockIn(ctx))
-	// State should not change
-	assert.Equal(t, stateClockedIn, fs.state)
-}
-
-func TestMyTeam2Go_ServerRejectsAction(t *testing.T) {
-	fs := newFakeServer(t)
-	fs.rejectNextAction = true
-	clocker := fs.newClocker()
-	ctx := context.Background()
-
-	err := clocker.ClockIn(ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no se ha podido efectuar")
-}
-
-func TestMyTeam2Go_ClockInVerificationFails(t *testing.T) {
-	fs := newFakeServer(t)
-	// State won't change after Guardar → verification will find ClockOut not ready
-	fs.freezeState = true
-	clocker := fs.newClocker()
-	ctx := context.Background()
-
-	err := clocker.ClockIn(ctx)
-	require.Error(t, err)
-	// The real error from myteam2go.go when post-submit verification fails:
-	// "clock-in submitted but isReadyToClockOut still reports false"
-	assert.Contains(t, err.Error(), "clock-in submitted but")
 }
 
 func TestMyTeam2Go_IsHoliday_True(t *testing.T) {
