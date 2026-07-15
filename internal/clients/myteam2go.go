@@ -72,7 +72,7 @@ var (
 
 // ClockIn sends a clock-in request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
-	if err := c.login(ctx); err != nil {
+	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ Error logging in. Impossible to clock in", "error", err)
 		return err
 	}
@@ -106,7 +106,7 @@ func (c *MyTeam2GoClocker) ClockIn(ctx context.Context) error {
 
 // ClockOut sends a clock-out request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockOut(ctx context.Context) error {
-	if err := c.login(ctx); err != nil {
+	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ Error logging in. Impossible to clock out", "error", err)
 		return err
 	}
@@ -140,7 +140,7 @@ func (c *MyTeam2GoClocker) ClockOut(ctx context.Context) error {
 
 // ClockPause sends a lunch-pause request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockPause(ctx context.Context) error {
-	if err := c.login(ctx); err != nil {
+	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ Error logging in. Impossible to clock pause", "error", err)
 		return err
 	}
@@ -174,7 +174,7 @@ func (c *MyTeam2GoClocker) ClockPause(ctx context.Context) error {
 
 // ClockResume sends a resume-from-lunch request to MyTeam2Go.
 func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
-	if err := c.login(ctx); err != nil {
+	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ Error logging in. Impossible to clock resume", "error", err)
 		return err
 	}
@@ -211,7 +211,7 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 // The vacation calendar panel is loaded dynamically via AJAX, so after fetching the
 // initial home page we trigger the calendar panel the same way the browser does.
 func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
-	if err := c.login(ctx); err != nil {
+	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ IsHoliday: login failed, assuming not a holiday", "error", err)
 		return false
 	}
@@ -497,9 +497,9 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	return nil
 }
 
-// login authenticates the user by sending a POST request to the login endpoint with username and password credentials.
-// It stores the JSESSIONID cookie for session management. Returns an error if login fails.
-func (c *MyTeam2GoClocker) login(ctx context.Context) error {
+// Login authenticates the user by sending a POST request to the Login endpoint with username and password credentials.
+// It stores the JSESSIONID cookie for session management. Returns an error if Login fails.
+func (c *MyTeam2GoClocker) Login(ctx context.Context) error {
 	loginURL := c.baseURL + "/j_security_check"
 
 	credentials := url.Values{}
