@@ -71,10 +71,10 @@ func LoadConfig(filePath string) (*Config, error) {
 
 	cfg.ClientConfig = make(map[string]string)
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "CLIENT_") {
+		if strings.HasPrefix(env, "BYECLOCKING_") {
 			parts := strings.SplitN(env, "=", 2)
 			if len(parts) == 2 {
-				key := strings.ToLower(strings.TrimPrefix(parts[0], "CLIENT_"))
+				key := strings.ToLower(strings.TrimPrefix(parts[0], "BYECLOCKING_"))
 				cfg.ClientConfig[key] = parts[1]
 			}
 		}
