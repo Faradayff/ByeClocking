@@ -162,5 +162,3 @@ If you wish to contribute improvements to ByeClocking, please review and strictl
       client in the `internal/clients` directory.
 
 ---
-> **Disclaimer:** A significant portion of this project's code and documentation was generated and maintained with the
-> assistance of artificial intelligence, specifically using Google's **Antigravity**.
