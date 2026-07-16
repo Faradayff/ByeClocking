@@ -38,7 +38,7 @@ Since ByeClocking is designed to run continuously on a server, the recommended w
      byeclocking:
        image: ghcr.io/faradayff/byeclocking:latest
        container_name: byeclocking
-       restart: always
+       restart: unless-stopped
        volumes:
          - ./configs:/app/configs
          - ./logs:/app/logs
