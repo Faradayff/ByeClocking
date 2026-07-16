@@ -17,7 +17,7 @@ import (
 
 // main is the entry point of the ByeClocking application.
 func main() {
-	logLevel := flag.String("loglevel", "DEBUG", "Log level: DEBUG, INFO, WARN or ERROR")
+	logLevel := flag.String("loglevel", "INFO", "Log level: DEBUG, INFO, WARN or ERROR")
 	flag.Parse()
 
 	closeLogger := logger.InitLogging(*logLevel)
