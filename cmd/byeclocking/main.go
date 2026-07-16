@@ -32,7 +32,6 @@ func main() {
 	}
 
 	clocker := buildClocker(cfg)
-	slog.Info("🔧 Using clocking platform", "platform", cfg.ClockingPlatform)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
