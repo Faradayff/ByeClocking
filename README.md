@@ -39,6 +39,8 @@ Since ByeClocking is designed to run continuously on a server, the recommended w
        image: ghcr.io/faradayff/byeclocking:latest
        container_name: byeclocking
        restart: unless-stopped
+       environment:
+         - TZ=Europe/Madrid
        volumes:
          - ./configs:/app/configs
          - ./logs:/app/logs
@@ -115,10 +117,15 @@ and adjusting it to your preferences:
 Have in mind that if you don't leave margin to randomize the clocking times, you'll get a fixed behavior that may be
 suspicious for your company.
 
-### Environment Variables (Credentials)
+### Environment Variables
 
 **Never** put passwords in the JSON file. Credentials are injected via environment variables. You should use a `.env`
 file in the same directory as your `docker-compose.yml`.
+
+#### General Variables
+
+- `TZ`: Defines the time zone of the container (e.g., `Europe/Madrid`). It is crucial to set this correctly so the
+  clock-in times align with your local time.
 
 **Important:** The required environment variables depend entirely on the clocking platform (client) you are using.
 
