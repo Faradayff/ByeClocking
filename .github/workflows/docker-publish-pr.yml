@@ -10,7 +10,7 @@ env:
 
 jobs:
   build:
-    name: Docker Build
+    name: Docker Build PR
     runs-on: ubuntu-latest
     permissions:
       contents: read
