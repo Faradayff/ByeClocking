@@ -577,7 +577,11 @@ func (c *MyTeam2GoClocker) isReadyTo(ctx context.Context, status workAssistanceA
 	if err != nil {
 		return false, fmt.Errorf("failed to fetch page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("⚠️ isReadyTo: failed to close response body", "error", err)
+		}
+	}()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	html := string(bodyBytes)
