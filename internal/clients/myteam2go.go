@@ -460,7 +460,6 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	}
 	changeBytes, _ := io.ReadAll(changeResp.Body)
 	changeHtml := string(changeBytes)
-	slog.Debug("🌐 Change event response", "body", changeHtml)
 	if err := changeResp.Body.Close(); err != nil {
 		slog.Warn("⚠️ submitWorkAssistance: failed to close change response body", "error", err)
 	}
@@ -515,7 +514,6 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 
 	respBody, _ := io.ReadAll(postResp.Body)
 	respStr := string(respBody)
-	slog.Debug("🌐 Guardar response", "action", action.logVerb, "body", respStr)
 
 	if strings.Contains(respStr, "No se ha podido efectuar") {
 		return fmt.Errorf("%s rejected by server: no se ha podido efectuar el registro", action.logVerb)
