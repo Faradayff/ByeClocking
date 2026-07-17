@@ -134,6 +134,7 @@ func TestRandomizeHours(t *testing.T) {
 	cfg := &config.Config{
 		ClockIn:            config.ClockTime{Time: clockInTime},
 		ClockOut:           config.ClockTime{Time: clockOutTime},
+		FridayTimes:        []config.ClockTime{{Time: clockInTime}, {Time: clockOutTime}},
 		Lunchtime:          &config.ClockTime{Time: lunchTime},
 		MinTimeToLunch:     30,
 		MaxTimeToLunch:     60,
