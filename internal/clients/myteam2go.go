@@ -229,7 +229,11 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 		slog.Error("❌ IsHoliday: failed to fetch home page", "error", err)
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("⚠️ IsHoliday: failed to close response body", "error", err)
+		}
+	}()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	homeHTML := string(bodyBytes)
 
@@ -327,7 +331,11 @@ func (c *MyTeam2GoClocker) loadCalendarPanel(ctx context.Context, homeHTML, home
 	if err != nil {
 		return "", fmt.Errorf("AJAX request for calendar panel failed: %w", err)
 	}
-	defer menuResp.Body.Close()
+	defer func() {
+		if err := menuResp.Body.Close(); err != nil {
+			slog.Warn("⚠️ loadCalendarPanel: failed to close menu response body", "error", err)
+		}
+	}()
 	menuBytes, _ := io.ReadAll(menuResp.Body)
 	return string(menuBytes), nil
 }
@@ -353,7 +361,9 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 		return fmt.Errorf("failed to fetch home page: %w", err)
 	}
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		slog.Warn("⚠️ submitWorkAssistance: failed to close home response body", "error", err)
+	}
 	html := string(bodyBytes)
 
 	// ── ViewState helpers ─────────────────────────────────────────────────────
@@ -440,7 +450,9 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	changeBytes, _ := io.ReadAll(changeResp.Body)
 	changeHtml := string(changeBytes)
 	slog.Debug("🌐 Change event response", "body", changeHtml)
-	changeResp.Body.Close()
+	if err := changeResp.Body.Close(); err != nil {
+		slog.Warn("⚠️ submitWorkAssistance: failed to close change response body", "error", err)
+	}
 
 	if vs := extractViewState(changeHtml); vs != "" {
 		viewState = vs
@@ -484,7 +496,11 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	if err != nil {
 		return fmt.Errorf("failed to execute submit request: %w", err)
 	}
-	defer postResp.Body.Close()
+	defer func() {
+		if err := postResp.Body.Close(); err != nil {
+			slog.Warn("⚠️ submitWorkAssistance: failed to close post response body", "error", err)
+		}
+	}()
 
 	respBody, _ := io.ReadAll(postResp.Body)
 	respStr := string(respBody)
@@ -518,7 +534,11 @@ func (c *MyTeam2GoClocker) Login(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("login request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("⚠️ Login: failed to close response body", "error", err)
+		}
+	}()
 
 	if strings.Contains(resp.Request.URL.String(), "error=true") {
 		return fmt.Errorf("invalid credentials or login failed")
@@ -557,7 +577,11 @@ func (c *MyTeam2GoClocker) isReadyTo(ctx context.Context, status workAssistanceA
 	if err != nil {
 		return false, fmt.Errorf("failed to fetch page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("⚠️ isReadyTo: failed to close response body", "error", err)
+		}
+	}()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	html := string(bodyBytes)
@@ -620,7 +644,11 @@ func (c *MyTeam2GoClocker) loadWorkAssistanceMenu(ctx context.Context, html, hom
 	if err != nil {
 		return "", "", fmt.Errorf("failed to click 'Mi control horario': %w", err)
 	}
-	defer menuResp.Body.Close()
+	defer func() {
+		if err := menuResp.Body.Close(); err != nil {
+			slog.Warn("⚠️ loadWorkAssistanceMenu: failed to close menu response body", "error", err)
+		}
+	}()
 	menuBytes, _ := io.ReadAll(menuResp.Body)
 	menuHtml := string(menuBytes)
 
