@@ -60,6 +60,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=raw,value=${{ github.head_ref }},enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=experimental,enable=${{ github.event_name == 'pull_request' }}
 
       # Build and push Docker image with Buildx (only push on main)
       - name: Build and push Docker image
