@@ -17,8 +17,8 @@ func TestClockTimeJSON(t *testing.T) {
 		var ct ClockTime
 		err := json.Unmarshal(jsonData, &ct)
 		require.NoError(t, err)
-		assert.Equal(t, 14, ct.Time.Hour())
-		assert.Equal(t, 30, ct.Time.Minute())
+		assert.Equal(t, 14, ct.Hour())
+		assert.Equal(t, 30, ct.Minute())
 	})
 
 	t.Run("Unmarshal Invalid", func(t *testing.T) {
@@ -33,7 +33,7 @@ func TestClockTimeJSON(t *testing.T) {
 		var ct ClockTime
 		err := json.Unmarshal(jsonData, &ct)
 		require.NoError(t, err)
-		assert.True(t, ct.Time.IsZero())
+		assert.True(t, ct.IsZero())
 	})
 
 	t.Run("Marshal", func(t *testing.T) {
