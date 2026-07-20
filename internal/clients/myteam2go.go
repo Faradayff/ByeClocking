@@ -396,15 +396,26 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	}
 
 	// ── Extract Guardar button name ───────────────────────────────────────────
-	btnRegex := regexp.MustCompile(`name="(workAssistanceForm:j_idt\d+)"[^>]*><span[^>]*>Guardar</span>`)
-	btnMatches := btnRegex.FindStringSubmatch(menuHtml)
-	if len(btnMatches) < 2 {
-		btnMatches = btnRegex.FindStringSubmatch(html)
-		if len(btnMatches) < 2 {
-			return fmt.Errorf("could not find Guardar button in workAssistanceForm")
+	btnName := ""
+	// Match <button name="workAssistanceForm:...">...Guardar...</button> with possible nested tags
+	btnRegexText := regexp.MustCompile(`name="(workAssistanceForm:[^"]+)"[^>]*>(?:<[^>]+>)*\s*Guardar\s*<`)
+	// Match <input name="workAssistanceForm:..." value="Guardar">
+	btnRegexVal := regexp.MustCompile(`name="(workAssistanceForm:[^"]+)"[^>]*value="Guardar"`)
+
+	for _, htmlSource := range []string{menuHtml, html} {
+		if btnMatches := btnRegexText.FindStringSubmatch(htmlSource); len(btnMatches) >= 2 {
+			btnName = btnMatches[1]
+			break
+		}
+		if btnMatches := btnRegexVal.FindStringSubmatch(htmlSource); len(btnMatches) >= 2 {
+			btnName = btnMatches[1]
+			break
 		}
 	}
-	btnName := btnMatches[1]
+
+	if btnName == "" {
+		return fmt.Errorf("could not find Guardar button in workAssistanceForm")
+	}
 
 	// ── Extract option value ──────────────────────────────────────────────────
 	optRegex := regexp.MustCompile(`value="(\d+)"[^>]*>` + regexp.QuoteMeta(action.optionLabel) + `<`)
@@ -449,7 +460,6 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 	}
 	changeBytes, _ := io.ReadAll(changeResp.Body)
 	changeHtml := string(changeBytes)
-	slog.Debug("🌐 Change event response", "body", changeHtml)
 	if err := changeResp.Body.Close(); err != nil {
 		slog.Warn("⚠️ submitWorkAssistance: failed to close change response body", "error", err)
 	}
@@ -504,7 +514,6 @@ func (c *MyTeam2GoClocker) submitWorkAssistance(ctx context.Context, action work
 
 	respBody, _ := io.ReadAll(postResp.Body)
 	respStr := string(respBody)
-	slog.Debug("🌐 Guardar response", "action", action.logVerb, "body", respStr)
 
 	if strings.Contains(respStr, "No se ha podido efectuar") {
 		return fmt.Errorf("%s rejected by server: no se ha podido efectuar el registro", action.logVerb)
