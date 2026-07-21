@@ -4,7 +4,9 @@ on:
   push:
     tags:
     - "v*"
-  workflow_dispatch:
+  release:
+    types:
+    - published
 
 env:
   REGISTRY: ghcr.io
