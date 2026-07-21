@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -15,6 +16,14 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		if now := time.Now().Weekday(); now == time.Saturday || now == time.Sunday {
 			slog.Info("🏖️ Today is weekend, skipping clocking")
 			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+				break
+			}
+			continue
+		}
+
+		// Check connectivity before querying holiday status.
+		if ok := checkConnectivity(ctx, cfg, "holiday check"); !ok {
+			if ctx.Err() != nil {
 				break
 			}
 			continue
@@ -36,8 +45,17 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			break
 		} else if toClock {
 			slog.Info("✅ Clock in time")
-			err := clocker.ClockIn(ctx)
-			if err != nil {
+			// Check connectivity before clocking in.
+			if ok := checkConnectivity(ctx, cfg, "clock in"); !ok {
+				if ctx.Err() != nil {
+					break
+				}
+				if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+					break
+				}
+				continue
+			}
+			if err := clocker.ClockIn(ctx); err != nil {
 				slog.Error("❌ Failed to clock in", "error", err)
 				break
 			}
@@ -51,8 +69,17 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				break
 			} else if toClock {
 				slog.Info("⏸️ Lunch time")
-				err := clocker.ClockPause(ctx)
-				if err != nil {
+				// Check connectivity before clocking pause.
+				if ok := checkConnectivity(ctx, cfg, "lunch pause"); !ok {
+					if ctx.Err() != nil {
+						break
+					}
+					if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+						break
+					}
+					continue
+				}
+				if err := clocker.ClockPause(ctx); err != nil {
 					slog.Error("❌ Error when clocking pause for lunch", "error", err)
 					break
 				}
@@ -65,8 +92,17 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				break
 			} else if toClock {
 				slog.Info("▶️ Back from lunch time")
-				err := clocker.ClockResume(ctx)
-				if err != nil {
+				// Check connectivity before clocking resume.
+				if ok := checkConnectivity(ctx, cfg, "lunch resume"); !ok {
+					if ctx.Err() != nil {
+						break
+					}
+					if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+						break
+					}
+					continue
+				}
+				if err := clocker.ClockResume(ctx); err != nil {
 					slog.Error("❌ Error when clocking resume", "error", err)
 					break
 				}
@@ -82,8 +118,17 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			break
 		} else if toClock {
 			slog.Info("🏁 Clock out time")
-			err := clocker.ClockOut(ctx)
-			if err != nil {
+			// Check connectivity before clocking out.
+			if ok := checkConnectivity(ctx, cfg, "clock out"); !ok {
+				if ctx.Err() != nil {
+					break
+				}
+				if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
+					break
+				}
+				continue
+			}
+			if err := clocker.ClockOut(ctx); err != nil {
 				slog.Error("❌ Error when clocking out", "error", err)
 				break
 			}
@@ -95,6 +140,26 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			break
 		}
 	}
+}
+
+// checkConnectivity verifies internet connectivity before a network operation.
+// It retries for up to ConnectivityMaxWait, logging warnings on each attempt.
+// Returns true if connectivity is confirmed, false if the timeout was exceeded
+// or the context was canceled (check ctx.Err() to distinguish the two).
+func checkConnectivity(ctx context.Context, cfg *config.Config, operation string) bool {
+	slog.Debug("🌐 Checking internet connectivity", "operation", operation)
+	err := WaitForConnectivity(ctx, ConnectivityMaxWait)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, ErrConnectivityTimeout) {
+		slog.Error("❌ No internet connectivity after maximum wait time. Skipping to next day",
+			"operation", operation,
+			"maxWait", ConnectivityMaxWait,
+		)
+	}
+	// ctx canceled or timeout — caller checks ctx.Err() to decide whether to break.
+	return false
 }
 
 // waitUntil waits until the targetHour. Returns true if the event should be executed,
