@@ -10,3 +10,4 @@ services:
     volumes:
       - ./configs:/app/configs
       - ./logs:/app/logs
+      - ./cache:/app/cache

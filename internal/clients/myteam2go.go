@@ -210,24 +210,27 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 // vacation requests shown on the MyTeam2Go home page.
 // The vacation calendar panel is loaded dynamically via AJAX, so after fetching the
 // initial home page we trigger the calendar panel the same way the browser does.
+// On any network or parsing failure the result falls back to the on-disk holiday cache.
+// On success the cache is updated with the freshly retrieved vacation ranges and any
+// expired ranges (end date strictly before today) are pruned from the cache file.
 func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	if err := c.Login(ctx); err != nil {
-		slog.Error("❌ IsHoliday: login failed, assuming not a holiday", "error", err)
-		return false
+		slog.Error("❌ IsHoliday: login failed", "error", err)
+		return fallbackToCache("login failed")
 	}
 
 	homeURL := c.baseURL + "/home.xhtml"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
 	if err != nil {
 		slog.Error("❌ IsHoliday: failed to create request", "error", err)
-		return false
+		return fallbackToCache("request creation failed")
 	}
 	c.setBrowserHeaders(req, c.baseURL+"/")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
 		slog.Error("❌ IsHoliday: failed to fetch home page", "error", err)
-		return false
+		return fallbackToCache("home page fetch failed")
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -253,6 +256,9 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	matches := vacationRegex.FindAllStringSubmatch(calendarHTML, -1)
 	slog.Debug("🏖️ IsHoliday: vacation matches found", "count", len(matches), "matches", matches)
 
+	// Build updated cache from freshly retrieved vacation ranges and persist it.
+	var ranges []holidayRange
+	isHoliday := false
 	for _, m := range matches {
 		startDate, err1 := time.ParseInLocation("02/01/2006", m[1], today.Location())
 		endDate, err2 := time.ParseInLocation("02/01/2006", m[2], today.Location())
@@ -260,14 +266,18 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 			slog.Warn("⚠️ IsHoliday: failed to parse vacation dates", "start", m[1], "end", m[2])
 			continue
 		}
+		ranges = append(ranges, holidayRange{Start: startDate, End: endDate})
 		if !todayDate.Before(startDate) && !todayDate.After(endDate) {
 			slog.Debug("🏖️ IsHoliday: today is within an approved vacation period", "start", m[1], "end", m[2])
-			return true
+			isHoliday = true
 		}
 	}
+	saveHolidayCache(holidayCache{Ranges: ranges})
 
-	slog.Debug("✅ IsHoliday: no vacation period matches today")
-	return false
+	if !isHoliday {
+		slog.Debug("✅ IsHoliday: no vacation period matches today")
+	}
+	return isHoliday
 }
 
 // loadCalendarPanel triggers the calendar widget on the MyTeam2Go home page via a JSF
