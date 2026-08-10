@@ -261,7 +261,7 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 			continue
 		}
 		if !todayDate.Before(startDate) && !todayDate.After(endDate) {
-			slog.Info("🏖️ IsHoliday: today is within an approved vacation period", "start", m[1], "end", m[2])
+			slog.Debug("🏖️ IsHoliday: today is within an approved vacation period", "start", m[1], "end", m[2])
 			return true
 		}
 	}
