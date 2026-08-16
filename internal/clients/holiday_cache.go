@@ -41,26 +41,28 @@ func loadHolidayCache() holidayCache {
 	return cache
 }
 
-// saveHolidayCache prunes expired ranges and writes the cache to disk.
-func saveHolidayCache(cache holidayCache) {
+// saveHolidayCache prunes expired ranges, writes the cache to disk, and returns
+// the pruned cache for immediate use by the caller (avoiding a second disk read).
+func saveHolidayCache(cache holidayCache) holidayCache {
 	cache = pruneExpiredRanges(cache)
 
 	if err := os.MkdirAll("cache", 0o755); err != nil {
 		slog.Warn("⚠️ IsHoliday: could not create cache directory", "error", err)
-		return
+		return cache
 	}
 
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		slog.Warn("⚠️ IsHoliday: could not marshal holiday cache", "error", err)
-		return
+		return cache
 	}
 
 	if err := os.WriteFile(holidayCachePath, data, 0o644); err != nil {
 		slog.Warn("⚠️ IsHoliday: could not write holiday cache", "error", err)
-		return
+		return cache
 	}
 	slog.Debug("💾 Holiday cache saved", "path", holidayCachePath, "ranges", len(cache.Ranges))
+	return cache
 }
 
 // pruneExpiredRanges removes vacation ranges whose end date is strictly before today (midnight).
