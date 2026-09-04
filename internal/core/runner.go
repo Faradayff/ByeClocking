@@ -13,7 +13,7 @@ import (
 // Run is the main application loop that orchestrates the clocking actions throughout the day.
 func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 	for {
-		if now := time.Now().Weekday(); now == time.Saturday || now == time.Sunday {
+		if now := nowFunc().Weekday(); now == time.Saturday || now == time.Sunday {
 			slog.Info("🏖️ Today is weekend, skipping clocking")
 			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
 				break
@@ -190,7 +190,7 @@ func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 
 // waitUntilTomorrow calculates the time until the next day's clock-in time and waits for it.
 func waitUntilTomorrow(ctx context.Context, clockIn time.Time) error {
-	now := time.Now()
+	now := nowFunc()
 	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, clockIn.Hour(), clockIn.Minute(), clockIn.Second(), clockIn.Nanosecond(), now.Location())
 	wakeUpTime := time.Until(tomorrow) - time.Hour
 	slog.Debug("🌙 Waiting until tomorrow", "duration", wakeUpTime.Round(time.Minute))

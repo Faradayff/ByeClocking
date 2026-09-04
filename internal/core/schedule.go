@@ -8,12 +8,14 @@ import (
 	"github.com/Faradayff/ByeClocking/internal/config"
 )
 
+var nowFunc = time.Now
+
 // randomizeHours generates the specific execution times for today's clock actions, applying unpunctuality delays.
 func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.Time, lunchFinishTime time.Time, clockOutTime time.Time, hasLunch bool) {
 	slog.Debug("⚙️ Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
-	now := time.Now()
+	now := nowFunc()
 	setToday := func(t time.Time) time.Time {
 		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
 	}
@@ -69,7 +71,7 @@ func initDelays(cfg *config.Config) (clockInDelay time.Duration, lunchDelay time
 // isSummerTime() checks if the current date is within the summer period.
 // period expects two strings in "DD/MM" format, e.g. ["01/06", "31/08"].
 func isSummerTime(period []string) bool {
-	now := time.Now()
+	now := nowFunc()
 
 	if len(period) != 2 {
 		return false
