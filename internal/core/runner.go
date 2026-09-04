@@ -22,7 +22,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		}
 
 		// Check connectivity before querying holiday status.
-		if ok := checkConnectivity(ctx, cfg, "holiday check"); !ok {
+		if ok := checkConnectivity(ctx, "holiday check"); !ok {
 			if ctx.Err() != nil {
 				break
 			}
@@ -46,7 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		} else if toClock {
 			slog.Info("✅ Clock in time")
 			// Check connectivity before clocking in.
-			if ok := checkConnectivity(ctx, cfg, "clock in"); !ok {
+			if ok := checkConnectivity(ctx, "clock in"); !ok {
 				if ctx.Err() != nil {
 					break
 				}
@@ -70,7 +70,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			} else if toClock {
 				slog.Info("⏸️ Lunch time")
 				// Check connectivity before clocking pause.
-				if ok := checkConnectivity(ctx, cfg, "lunch pause"); !ok {
+				if ok := checkConnectivity(ctx, "lunch pause"); !ok {
 					if ctx.Err() != nil {
 						break
 					}
@@ -93,7 +93,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 			} else if toClock {
 				slog.Info("▶️ Back from lunch time")
 				// Check connectivity before clocking resume.
-				if ok := checkConnectivity(ctx, cfg, "lunch resume"); !ok {
+				if ok := checkConnectivity(ctx, "lunch resume"); !ok {
 					if ctx.Err() != nil {
 						break
 					}
@@ -119,7 +119,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		} else if toClock {
 			slog.Info("🏁 Clock out time")
 			// Check connectivity before clocking out.
-			if ok := checkConnectivity(ctx, cfg, "clock out"); !ok {
+			if ok := checkConnectivity(ctx, "clock out"); !ok {
 				if ctx.Err() != nil {
 					break
 				}
@@ -146,7 +146,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 // It retries for up to ConnectivityMaxWait, logging warnings on each attempt.
 // Returns true if connectivity is confirmed, false if the timeout was exceeded
 // or the context was canceled (check ctx.Err() to distinguish the two).
-func checkConnectivity(ctx context.Context, cfg *config.Config, operation string) bool {
+func checkConnectivity(ctx context.Context, operation string) bool {
 	slog.Debug("🌐 Checking internet connectivity", "operation", operation)
 	err := WaitForConnectivity(ctx, ConnectivityMaxWait)
 	if err == nil {
