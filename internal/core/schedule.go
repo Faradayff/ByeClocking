@@ -8,17 +8,20 @@ import (
 	"github.com/Faradayff/ByeClocking/internal/config"
 )
 
+var nowFunc = time.Now
+
 // randomizeHours generates the specific execution times for today's clock actions, applying unpunctuality delays.
 func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.Time, lunchFinishTime time.Time, clockOutTime time.Time, hasLunch bool) {
 	slog.Debug("⚙️ Setting up delays and times")
 	clockInDelay, lunchDelay, lunchDuration, clockOutDelay := initDelays(cfg)
 
-	now := time.Now()
+	now := nowFunc()
 	setToday := func(t time.Time) time.Time {
 		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
 	}
 
 	isSummer := isSummerTime(cfg.SummerPeriod)
+	isFriday := now.Weekday() == time.Friday && len(cfg.FridayTimes) == 2
 
 	var clockIn, clockOut time.Time
 	if isSummer {
@@ -26,7 +29,7 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 		clockOut = cfg.SummerTimes[1].Time
 		slog.Info("🌞 We are in summer time")
 		slog.Debug("🌴 Using summer times", "clockIn", clockIn, "clockOut", clockOut)
-	} else if now.Weekday() == time.Friday && len(cfg.FridayTimes) == 2 {
+	} else if isFriday {
 		clockIn = cfg.FridayTimes[0].Time
 		clockOut = cfg.FridayTimes[1].Time
 		slog.Info("🎉 Today is Friday")
@@ -39,14 +42,14 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 	clockInTime = setToday(clockIn).Add(clockInDelay)
 	clockOutTime = setToday(clockOut).Add(clockOutDelay)
 
-	hasLunch = cfg.Lunchtime != nil && !isSummer
+	hasLunch = cfg.Lunchtime != nil && !isSummer && !isFriday
 
 	if hasLunch {
 		lunchTime = setToday(cfg.Lunchtime.Time).Add(lunchDelay)
 		lunchFinishTime = lunchTime.Add(lunchDuration)
+		slog.Debug("🕒 Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime)
 	}
 
-	slog.Debug("🕒 Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
 	return
 }
 
@@ -68,7 +71,7 @@ func initDelays(cfg *config.Config) (clockInDelay time.Duration, lunchDelay time
 // isSummerTime() checks if the current date is within the summer period.
 // period expects two strings in "DD/MM" format, e.g. ["01/06", "31/08"].
 func isSummerTime(period []string) bool {
-	now := time.Now()
+	now := nowFunc()
 
 	if len(period) != 2 {
 		return false
