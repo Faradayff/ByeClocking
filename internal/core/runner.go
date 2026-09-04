@@ -192,7 +192,7 @@ func waitUntil(ctx context.Context, targetHour time.Time) (bool, error) {
 func waitUntilTomorrow(ctx context.Context, clockIn time.Time) error {
 	now := nowFunc()
 	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, clockIn.Hour(), clockIn.Minute(), clockIn.Second(), clockIn.Nanosecond(), now.Location())
-	wakeUpTime := time.Until(tomorrow) - time.Hour
+	wakeUpTime := time.Until(tomorrow) - 30*time.Minute
 	slog.Debug("🌙 Waiting until tomorrow", "duration", wakeUpTime.Round(time.Minute))
 
 	if wakeUpTime <= 0 {
