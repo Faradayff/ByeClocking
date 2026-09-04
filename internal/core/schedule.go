@@ -19,6 +19,7 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 	}
 
 	isSummer := isSummerTime(cfg.SummerPeriod)
+	isFriday := now.Weekday() == time.Friday && len(cfg.FridayTimes) == 2
 
 	var clockIn, clockOut time.Time
 	if isSummer {
@@ -26,7 +27,7 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 		clockOut = cfg.SummerTimes[1].Time
 		slog.Info("🌞 We are in summer time")
 		slog.Debug("🌴 Using summer times", "clockIn", clockIn, "clockOut", clockOut)
-	} else if now.Weekday() == time.Friday && len(cfg.FridayTimes) == 2 {
+	} else if isFriday {
 		clockIn = cfg.FridayTimes[0].Time
 		clockOut = cfg.FridayTimes[1].Time
 		slog.Info("🎉 Today is Friday")
@@ -39,14 +40,14 @@ func randomizeHours(cfg *config.Config) (clockInTime time.Time, lunchTime time.T
 	clockInTime = setToday(clockIn).Add(clockInDelay)
 	clockOutTime = setToday(clockOut).Add(clockOutDelay)
 
-	hasLunch = cfg.Lunchtime != nil && !isSummer
+	hasLunch = cfg.Lunchtime != nil && !isSummer && !isFriday
 
 	if hasLunch {
 		lunchTime = setToday(cfg.Lunchtime.Time).Add(lunchDelay)
 		lunchFinishTime = lunchTime.Add(lunchDuration)
+		slog.Debug("🕒 Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime)
 	}
 
-	slog.Debug("🕒 Times initialized", "clockInTime", clockInTime, "lunchTime", lunchTime, "lunchFinishTime", lunchFinishTime, "clockOutTime", clockOutTime, "hasLunch", hasLunch)
 	return
 }
 
