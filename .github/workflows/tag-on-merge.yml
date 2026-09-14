@@ -9,6 +9,7 @@ on:
 
 jobs:
   create-tag:
+    name: Push new Tag and Description
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:

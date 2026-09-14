@@ -1,4 +1,4 @@
-name: Validate Tag and Description in PR
+name: Tags in PR
 
 on:
   pull_request:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   validate-pr-format:
-    name: Validate PR Tag and Description
+    name: Validate Tag and Description
     runs-on: ubuntu-latest
     steps:
       - name: Check PR body for Tag and Description
