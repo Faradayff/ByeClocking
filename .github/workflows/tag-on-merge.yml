@@ -61,7 +61,9 @@ jobs:
           git push origin "$TAG_NAME"
 
   build-docker:
-    permissions: {}
+    permissions:
+      contents: read
+      packages: write
     needs: create-tag
     if: needs.create-tag.outputs.created == 'true'
     uses: ./.github/workflows/docker-publish.yml
