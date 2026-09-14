@@ -148,6 +148,45 @@ viewed with:
 docker-compose logs -f
 ```
 
+## Workflows, tags and releases
+
+The repository uses GitHub Actions to validate pull requests and publish Docker
+images:
+
+- **Go Tests & Checks:** verifies dependencies, formatting, linting, compilation,
+  and unit/integration tests for pull requests targeting `main`.
+- **Docker (PR):** builds the Docker image for pull requests targeting `main`,
+  using temporary `pr-*` and `experimental` tags.
+- **Tags in PR:** checks that every pull request targeting `main` includes a
+  version tag and a description in its body.
+- **New Tag on Merges:** after a pull request is merged into `main`, creates the
+  annotated tag requested in the pull request and starts the Docker publishing
+  workflow.
+- **Docker:** publishes multi-platform (`linux/amd64` and `linux/arm64`)
+  images to GitHub Container Registry when a `v*` tag is pushed.
+- **Clear Actions Cache:** can be run manually when the GitHub Actions cache
+  needs to be cleared.
+
+### Versioning policy
+
+Versions use the `vMAJOR.MINOR.PATCH` format, for example `v1.2.5`.
+
+- Increment **MAJOR** when adding support for a new clocking client/platform.
+- Increment **MINOR** when adding new functionality without adding a new client.
+- Increment **PATCH** for bug fixes, dependency updates, documentation changes,
+  and other backwards-compatible maintenance.
+
+The version must be included in the pull request body together with its
+description:
+
+```text
+Tag: v1.3.0
+Description: Add support for the new scheduling option
+```
+
+When the pull request is merged, the tag is created automatically and the
+corresponding Docker image is published with that version tag.
+
 ## Contribution Guide
 
 If you wish to contribute improvements to ByeClocking, please review and strictly follow these project rules:
