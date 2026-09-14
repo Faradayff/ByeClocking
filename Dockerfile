@@ -27,5 +27,8 @@ RUN apk --no-cache add ca-certificates tzdata
 # Copy the built binary from the builder stage
 COPY --from=builder /app/byeclocking .
 
+# Declare /app/cache as a mount point so the holiday cache persists across restarts
+VOLUME ["/app/cache"]
+
 # Command to run the application
 CMD ["./byeclocking"]

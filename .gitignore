@@ -34,3 +34,6 @@ configs/config.json
 
 # Logs
 logs/
+
+# Runtime cache (holiday cache, etc.)
+cache/
