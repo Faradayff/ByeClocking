@@ -28,7 +28,7 @@ jobs:
           CLEAN_BODY=$(echo "$PR_BODY" | tr -d '\r')
           
           # Look for a line such as "Tag: v1.0.0" in the PR description
-          TAG=$(echo "$CLEAN_BODY" | grep -iE 'tag:\s*v?[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | awk -F':' '{print $2}' | tr -d ' ')
+          TAG=$(echo "$CLEAN_BODY" | grep -iE 'tag:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | awk -F':' '{print $2}' | tr -d ' ')
           TAG_DESCRIPTION=$(echo "$CLEAN_BODY" | grep -iE '^description:\s*.+$' | head -n1 | sed -E 's/^[Dd]escription:\s*//')
           
           if [ -z "$TAG" ]; then
