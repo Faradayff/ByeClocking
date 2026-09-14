@@ -64,6 +64,6 @@ jobs:
     permissions: {}
     needs: create-tag
     if: needs.create-tag.outputs.created == 'true'
-    uses: ./.github/workflows/docker.yml
+    uses: ./.github/workflows/docker-publish.yml
     with:
       tag_name: ${{ needs.create-tag.outputs.tag_name }}
