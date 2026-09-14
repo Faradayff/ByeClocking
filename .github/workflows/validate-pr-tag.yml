@@ -9,6 +9,9 @@ on:
       - edited
       - synchronize
 
+permissions:
+  contents: read
+
 jobs:
   validate-pr-format:
     name: Validate PR Tag and Description
