@@ -64,6 +64,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: write
     needs: create-tag
     if: needs.create-tag.outputs.created == 'true'
     uses: ./.github/workflows/docker-publish.yml
