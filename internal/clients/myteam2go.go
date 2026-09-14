@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -255,13 +256,26 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	matches := vacationRegex.FindAllStringSubmatch(calendarHTML, -1)
 	slog.Debug("🏖️ IsHoliday: vacation matches found", "count", len(matches), "matches", matches)
 
-	// Build updated cache by merging freshly retrieved ranges with the existing cache.
 	// The MyTeam2Go platform removes a vacation from the calendar widget the moment it
 	// starts (it becomes "active"), so the web response no longer contains it. We must
 	// preserve cached ranges that have not yet expired even when the web stopped listing
-	// them. Only ranges whose end date is strictly in the past are pruned (handled inside
-	// saveHolidayCache via pruneExpiredRanges).
+	// them.
 	existingCache := loadHolidayCache()
+
+	if len(matches) == 0 {
+		slog.Debug("📭 IsHoliday: no vacation ranges found on web, checking cache", "cacheRanges", len(existingCache.Ranges))
+		isHoliday := isHolidayInCache(existingCache)
+		if isHoliday {
+			slog.Debug("🏖️ IsHoliday: today is within a vacation period (from cache)")
+		} else {
+			slog.Debug("✅ IsHoliday: no vacation period matches today")
+		}
+		return isHoliday
+	}
+
+	// Build updated cache by merging freshly retrieved ranges with the existing cache.
+	// Only ranges whose end date is strictly in the past are pruned (handled inside
+	// loadHolidayCache/saveHolidayCache via pruneExpiredRanges).
 
 	// Index web-fetched ranges by start date for deduplication.
 	webRanges := make(map[time.Time]holidayRange)
@@ -281,20 +295,19 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	for _, r := range existingCache.Ranges {
 		mergedMap[r.Start] = r
 	}
-	for start, r := range webRanges {
-		mergedMap[start] = r
-	}
+	maps.Copy(mergedMap, webRanges)
 	var mergedRanges []holidayRange
 	for _, r := range mergedMap {
 		mergedRanges = append(mergedRanges, r)
 	}
+	slog.Debug("🔗 IsHoliday: vacations merged with cache", "count", len(mergedRanges), "vacations", mergedRanges)
 
 	// Save (which prunes expired ranges internally) and use the returned pruned cache
 	// as the source of truth — avoids a second disk read.
 	savedCache := saveHolidayCache(holidayCache{Ranges: mergedRanges})
 	isHoliday := isHolidayInCache(savedCache)
 	if isHoliday {
-		slog.Debug("🏖️ IsHoliday: today is within a vacation period (from cache)")
+		slog.Debug("🏖️ IsHoliday: today is within a vacation period")
 	} else {
 		slog.Debug("✅ IsHoliday: no vacation period matches today")
 	}
