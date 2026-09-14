@@ -1,0 +1,47 @@
+name: Tags in PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - edited
+      - synchronize
+
+permissions:
+  contents: read
+
+jobs:
+  validate-pr-format:
+    name: Validate Tag and Description
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body for Tag and Description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # 1. Remove carriage returns (\r), just like in the other script
+          CLEAN_BODY=$(echo "$PR_BODY" | tr -d '\r')
+          
+          # 2. Check that the Tag exists
+          if ! echo "$CLEAN_BODY" | grep -iE 'tag:\s*v[0-9]+\.[0-9]+\.[0-9]+' > /dev/null; then
+            echo "❌ ERROR: Tag validation failed."
+            echo "The expected pattern was not found in the PR description."
+            echo "Please add a line in the following format: 'Tag: v1.0.0'"
+            exit 1
+          else
+            echo "✅ Tag validated successfully."
+          fi
+
+          # 3. Check that the Description exists
+          if ! echo "$CLEAN_BODY" | grep -iE '^description:\s*.+$' > /dev/null; then
+            echo "❌ ERROR: Description validation failed."
+            echo "The expected pattern was not found in the PR description."
+            echo "Please add a line in the following format: 'Description: Release details'"
+            exit 1
+          else
+            echo "✅ Description validated successfully."
+          fi
+          
+          echo "The PR meets the required format and is ready to merge."
