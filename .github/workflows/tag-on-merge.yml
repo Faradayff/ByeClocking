@@ -9,11 +9,13 @@ on:
 
 jobs:
   create-tag:
-    # Runs only if the PR was actually MERGED, not merely closed
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      created: ${{ steps.extract_tag.outputs.created }}
+      tag_name: ${{ steps.extract_tag.outputs.tag_name }}
 
     steps:
       - name: Checkout repository
@@ -24,18 +26,17 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          # 2. Remove carriage returns (\r) to prevent them from being appended to the variables
           CLEAN_BODY=$(echo "$PR_BODY" | tr -d '\r')
           
-          # Look for a line such as "Tag: v1.0.0" in the PR description
-          TAG=$(echo "$CLEAN_BODY" | grep -iE 'tag:\s*v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | awk -F':' '{print $2}' | tr -d ' ')
+          TAG=$(echo "$CLEAN_BODY" | grep -iE 'tag:\s*v?[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | awk -F':' '{print $2}' | tr -d ' ')
           TAG_DESCRIPTION=$(echo "$CLEAN_BODY" | grep -iE '^description:\s*.+$' | head -n1 | sed -E 's/^[Dd]escription:\s*//')
           
-          if [ -z "$TAG" ]; then
-            echo "No tag pattern found in the PR description. Skipping."
-            echo "created=false" >> $GITHUB_OUTPUT
-          elif [ -z "$TAG_DESCRIPTION" ]; then
-            echo "No tag description found in the PR description. Skipping."
+          # Ensure the 'v' prefix is present
+          if [ -n "$TAG" ] && [[ "$TAG" != v* ]]; then
+            TAG="v$TAG"
+          fi
+
+          if [ -z "$TAG" ] || [ -z "$TAG_DESCRIPTION" ]; then
             echo "created=false" >> $GITHUB_OUTPUT
           else
             echo "TAG_NAME=$TAG" >> $GITHUB_ENV
@@ -44,7 +45,10 @@ jobs:
               echo "$TAG_DESCRIPTION"
               echo EOF
             } >> "$GITHUB_ENV"
+            
+            # Save the outputs for the next job
             echo "created=true" >> $GITHUB_OUTPUT
+            echo "tag_name=$TAG" >> $GITHUB_OUTPUT
           fi
 
       - name: Create and Push Tag
@@ -54,3 +58,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG_NAME" -m "$TAG_DESCRIPTION"
           git push origin "$TAG_NAME"
+
+  build-docker:
+    needs: create-tag
+    if: needs.create-tag.outputs.created == 'true'
+    uses: ./.github/workflows/docker.yml
+    with:
+      tag_name: ${{ needs.create-tag.outputs.tag_name }}

@@ -3,7 +3,12 @@ name: Docker
 on:
   push:
     tags:
-    - "v*"
+      - "v*"
+  workflow_call:
+    inputs:
+      tag_name:
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -20,6 +25,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -41,7 +48,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable=true
-            type=ref,event=tag
+            type=raw,value=${{ inputs.tag_name || github.ref_name }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
