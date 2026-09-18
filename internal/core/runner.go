@@ -110,7 +110,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				slog.Info("⏭️ Skipped back from lunch time (missed event)")
 			}
 		} else {
-			slog.Info("🌞 Summer time. Skipping lunch break")
+			slog.Info("🎉 No lunch today. Skipping lunch break")
 		}
 
 		slog.Debug("🔐 Waiting to clock out")
