@@ -484,20 +484,36 @@ func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error)
 
 	// 2. Extract each month container: <div class="month-container ...">...</div> or <table class="month">
 	// We match each month-container or month table with its month-title
-	monthRegex := regexp.MustCompile(`(?s)<(?:div|table)[^>]*class="[^"]*month(?:-container)?[^"]*"[^>]*>.*?<th class="month-title"[^>]*>([^<]+)</th>(.*?)</table>`)
+	monthRegex := regexp.MustCompile(`(?s)<(?:div|table)[^>]*class="[^"]*month(?:-container)?[^"]*"[^>]*>.*?<th[^>]*class="[^"]*month-title[^"]*"[^>]*>(?:<[^>]+>)*\s*([^<]+)\s*(?:<[^>]+>)*</th>(.*?)</table>`)
 	monthMatches := monthRegex.FindAllStringSubmatch(html, -1)
 	if len(monthMatches) == 0 {
-		// Fallback: match <table class="month"> directly
-		monthRegex = regexp.MustCompile(`(?s)<table[^>]*class="[^"]*month[^"]*"[^>]*>.*?<th class="month-title"[^>]*>([^<]+)</th>(.*?)</table>`)
+		// Fallback 1: match <table class="month"> directly
+		monthRegex = regexp.MustCompile(`(?s)<table[^>]*class="[^"]*month[^"]*"[^>]*>.*?<th[^>]*class="[^"]*month-title[^"]*"[^>]*>(?:<[^>]+>)*\s*([^<]+)\s*(?:<[^>]+>)*</th>(.*?)</table>`)
 		monthMatches = monthRegex.FindAllStringSubmatch(html, -1)
+	}
+	if len(monthMatches) == 0 {
+		// Fallback 2: match <table class="month">...</table> without requiring <th class="month-title">
+		fallbackTableRegex := regexp.MustCompile(`(?s)<table[^>]*class="[^"]*month[^"]*"[^>]*>(.*?)</table>`)
+		for _, ftm := range fallbackTableRegex.FindAllStringSubmatch(html, -1) {
+			monthMatches = append(monthMatches, []string{ftm[0], "", ftm[1]})
+		}
 	}
 
 	if len(monthMatches) == 0 {
-		snippetLen := 500
-		if len(html) < snippetLen {
-			snippetLen = len(html)
+		idx := strings.Index(html, "month")
+		snippet := ""
+		if idx != -1 {
+			start := idx - 200
+			if start < 0 {
+				start = 0
+			}
+			end := idx + 400
+			if end > len(html) {
+				end = len(html)
+			}
+			snippet = html[start:end]
 		}
-		slog.Debug("🔍 Calendar HTML snippet for debugging", "snippet", html[:snippetLen])
+		slog.Debug("🔍 Calendar HTML around 'month' for debugging", "idx", idx, "snippetAroundMonth", snippet)
 		return nil, fmt.Errorf("no months found in calendar HTML")
 	}
 
