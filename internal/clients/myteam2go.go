@@ -453,10 +453,13 @@ func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, target
 		if err != nil {
 			return nil, fmt.Errorf("failed to read redirect response: %w", err)
 		}
-		return parseCalendarEmployeeHTML(string(redirBytes), targetYear)
+		redirHTML := string(redirBytes)
+		slog.Debug("📄 Calendar page received", "htmlLen", len(redirHTML), "containsMonth", strings.Contains(redirHTML, "month"), "containsYearTitle", strings.Contains(redirHTML, "year-title"))
+		return parseCalendarEmployeeHTML(redirHTML, targetYear)
 	}
 
 	// If no redirect tag was found, parse the response directly (e.g. if the full page or updates were returned)
+	slog.Debug("📄 Direct response received", "htmlLen", len(postBody), "containsMonth", strings.Contains(postBody, "month"))
 	return parseCalendarEmployeeHTML(postBody, targetYear)
 }
 
@@ -490,6 +493,11 @@ func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error)
 	}
 
 	if len(monthMatches) == 0 {
+		snippetLen := 500
+		if len(html) < snippetLen {
+			snippetLen = len(html)
+		}
+		slog.Debug("🔍 Calendar HTML snippet for debugging", "snippet", html[:snippetLen])
 		return nil, fmt.Errorf("no months found in calendar HTML")
 	}
 
