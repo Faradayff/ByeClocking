@@ -17,10 +17,11 @@ type holidayRange struct {
 
 // holidayCache is the structure persisted to disk.
 type holidayCache struct {
-	Ranges []holidayRange `json:"ranges"`
+	Holidays     []holidayRange `json:"holidays"`
+	BankHolidays []time.Time    `json:"bank_holidays"`
 }
 
-// loadHolidayCache reads the cache file from disk and prunes expired entries.
+// loadHolidayCache reads the cache file from disk and prunes expired vacation entries.
 // Returns an empty cache if the file does not exist or cannot be parsed.
 func loadHolidayCache() holidayCache {
 	data, err := os.ReadFile(holidayCachePath)
@@ -61,7 +62,7 @@ func saveHolidayCache(cache holidayCache) holidayCache {
 		slog.Warn("⚠️ IsHoliday: could not write holiday cache", "error", err)
 		return cache
 	}
-	slog.Debug("💾 Holiday cache saved", "path", holidayCachePath, "ranges", len(cache.Ranges))
+	slog.Debug("💾 Holiday cache saved", "path", holidayCachePath, "holidays", len(cache.Holidays), "bank_holidays", len(cache.BankHolidays))
 	return cache
 }
 
@@ -71,25 +72,47 @@ func pruneExpiredRanges(cache holidayCache) holidayCache {
 	todayMidnight := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
 
 	var active []holidayRange
-	for _, r := range cache.Ranges {
+	for _, r := range cache.Holidays {
 		if !r.End.Before(todayMidnight) {
 			active = append(active, r)
 		}
 	}
 
-	if pruned := len(cache.Ranges) - len(active); pruned > 0 {
+	if pruned := len(cache.Holidays) - len(active); pruned > 0 {
 		slog.Debug("🗑️ Pruned expired vacation ranges from cache", "count", pruned)
 	}
 
-	cache.Ranges = active
+	cache.Holidays = active
 	return cache
+}
+
+// hasBankHolidaysForYear checks if cache has any bank holidays for the given year.
+func hasBankHolidaysForYear(cache holidayCache, year int) bool {
+	for _, bh := range cache.BankHolidays {
+		if bh.Year() == year {
+			return true
+		}
+	}
+	return false
+}
+
+// isBankHolidayInCache checks if the given date matches any cached bank holiday.
+func isBankHolidayInCache(cache holidayCache, date time.Time) bool {
+	y, m, d := date.Date()
+	for _, bh := range cache.BankHolidays {
+		by, bm, bd := bh.Date()
+		if y == by && m == bm && d == bd {
+			return true
+		}
+	}
+	return false
 }
 
 // isHolidayInCache returns true if today falls within any cached vacation range.
 func isHolidayInCache(cache holidayCache) bool {
 	today := time.Now()
 	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
-	for _, r := range cache.Ranges {
+	for _, r := range cache.Holidays {
 		if !todayDate.Before(r.Start) && !todayDate.After(r.End) {
 			return true
 		}
@@ -97,11 +120,19 @@ func isHolidayInCache(cache holidayCache) bool {
 	return false
 }
 
-// fallbackToCache loads the holiday cache from disk and checks if today is a holiday.
+// fallbackToCache loads the holiday cache from disk and checks if today is a holiday
+// (either bank holiday or approved personal vacation).
 // Returns false if the cache is empty or unavailable.
 func fallbackToCache(reason string) bool {
 	cache := loadHolidayCache()
-	if len(cache.Ranges) == 0 {
+	today := time.Now()
+
+	if isBankHolidayInCache(cache, today) {
+		slog.Warn("⚠️ IsHoliday: using cached bank holiday data", "reason", reason)
+		return true
+	}
+
+	if len(cache.Holidays) == 0 {
 		slog.Debug("📭 Holiday cache is empty, assuming not a holiday", "reason", reason)
 		return false
 	}

@@ -207,14 +207,52 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	return nil
 }
 
-// IsHoliday checks if the current day is a vacation day by inspecting the approved
-// vacation requests shown on the MyTeam2Go home page.
-// The vacation calendar panel is loaded dynamically via AJAX, so after fetching the
-// initial home page we trigger the calendar panel the same way the browser does.
-// On any network or parsing failure the result falls back to the on-disk holiday cache.
-// On success the cache is updated with the freshly retrieved vacation ranges and any
-// expired ranges (end date strictly before today) are pruned from the cache file.
+// IsHoliday checks if the current day is a holiday (either a bank holiday or a personal holiday).
 func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
+	today := time.Now()
+
+	return c.IsBankHoliday(ctx, today) || c.IsPersonalHoliday(ctx, today)
+}
+
+// IsBankHoliday checks if today is an official bank holiday.
+// It maintains a cache of bank holidays for the current year, which is reset on January 1st
+// (or when the current year's bank holidays are missing). If missing, it fetches the full calendar
+// from /pages/employeePortal/calendarEmployee.xhtml?i=0 and extracts all bank holidays.
+func (c *MyTeam2GoClocker) IsBankHoliday(ctx context.Context, today time.Time) bool {
+	currentYear := today.Year()
+
+	cache := loadHolidayCache()
+
+	if !hasBankHolidaysForYear(cache, currentYear) {
+		slog.Info("📅 Bank holidays for current year not found in cache, fetching from calendar", "year", currentYear)
+		cache.BankHolidays = nil
+
+		if err := c.Login(ctx); err != nil {
+			slog.Error("❌ IsBankHoliday: login failed while trying to fetch calendar", "error", err)
+		} else {
+			bankHolidays, err := c.fetchAndParseBankHolidays(ctx, currentYear)
+			if err != nil {
+				slog.Warn("⚠️ IsBankHoliday: failed to fetch bank holidays from calendar", "error", err)
+			} else {
+				cache.BankHolidays = bankHolidays
+				cache = saveHolidayCache(cache)
+				slog.Info("💾 Saved bank holidays to cache", "year", currentYear, "count", len(bankHolidays))
+			}
+		}
+	}
+
+	if isBankHolidayInCache(cache, today) {
+		slog.Info("🏖️ IsHoliday: today is a bank holiday (from cache)", "date", today.Format("2006-01-02"))
+		return true
+	}
+
+	return false
+}
+
+// IsPersonalHoliday checks if today is within an approved personal vacation period.
+// It inspects the approved vacation requests shown on the MyTeam2Go home page.
+func (c *MyTeam2GoClocker) IsPersonalHoliday(ctx context.Context, today time.Time) bool {
+
 	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ IsHoliday: login failed", "error", err)
 		return fallbackToCache("login failed")
@@ -241,12 +279,9 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	homeHTML := string(bodyBytes)
 
-	today := time.Now()
-
 	vacationRegex := regexp.MustCompile(`Vacaciones del\s+(\d{2}/\d{2}/\d{4})\s+a\s+(\d{2}/\d{2}/\d{4})`)
 
 	// The calendar section is rendered via a JSF AJAX partial request.
-	// Find the calendar topbar button (e.g. topMenuIdForm:menuCalendar...) and trigger it.
 	calendarHTML, err := c.loadCalendarPanel(ctx, homeHTML, homeURL)
 	if err != nil {
 		slog.Warn("⚠️ IsHoliday: could not load calendar panel via AJAX, falling back to home HTML", "error", err)
@@ -258,12 +293,11 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 
 	// The MyTeam2Go platform removes a vacation from the calendar widget the moment it
 	// starts (it becomes "active"), so the web response no longer contains it. We must
-	// preserve cached ranges that have not yet expired even when the web stopped listing
-	// them.
+	// preserve cached ranges that have not yet expired even when the web stopped listing them.
 	existingCache := loadHolidayCache()
 
 	if len(matches) == 0 {
-		slog.Debug("📭 IsHoliday: no vacation ranges found on web, checking cache", "cacheRanges", len(existingCache.Ranges))
+		slog.Debug("📭 IsHoliday: no vacation ranges found on web, checking cache", "cacheHolidays", len(existingCache.Holidays))
 		isHoliday := isHolidayInCache(existingCache)
 		if isHoliday {
 			slog.Debug("🏖️ IsHoliday: today is within a vacation period (from cache)")
@@ -274,10 +308,6 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	}
 
 	// Build updated cache by merging freshly retrieved ranges with the existing cache.
-	// Only ranges whose end date is strictly in the past are pruned (handled inside
-	// loadHolidayCache/saveHolidayCache via pruneExpiredRanges).
-
-	// Index web-fetched ranges by start date for deduplication.
 	webRanges := make(map[time.Time]holidayRange)
 	for _, m := range matches {
 		startDate, err1 := time.ParseInLocation("02/01/2006", m[1], today.Location())
@@ -289,10 +319,8 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 		webRanges[startDate] = holidayRange{Start: startDate, End: endDate}
 	}
 
-	// Merge: start with all non-expired cached ranges, then add/overwrite with
-	// anything the web returned (web data is authoritative for future ranges).
 	mergedMap := make(map[time.Time]holidayRange)
-	for _, r := range existingCache.Ranges {
+	for _, r := range existingCache.Holidays {
 		mergedMap[r.Start] = r
 	}
 	maps.Copy(mergedMap, webRanges)
@@ -302,9 +330,8 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	}
 	slog.Debug("🔗 IsHoliday: vacations merged with cache", "count", len(mergedRanges), "vacations", mergedRanges)
 
-	// Save (which prunes expired ranges internally) and use the returned pruned cache
-	// as the source of truth — avoids a second disk read.
-	savedCache := saveHolidayCache(holidayCache{Ranges: mergedRanges})
+	existingCache.Holidays = mergedRanges
+	savedCache := saveHolidayCache(existingCache)
 	isHoliday := isHolidayInCache(savedCache)
 	if isHoliday {
 		slog.Debug("🏖️ IsHoliday: today is within a vacation period")
@@ -312,6 +339,111 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 		slog.Debug("✅ IsHoliday: no vacation period matches today")
 	}
 	return isHoliday
+}
+
+// fetchAndParseBankHolidays retrieves the employee calendar page and extracts all bank holiday
+// dates for the specified year.
+func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, targetYear int) ([]time.Time, error) {
+	calURL := c.baseURL + "/pages/employeePortal/calendarEmployee.xhtml"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, calURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create calendar request: %w", err)
+	}
+	c.setBrowserHeaders(req, c.baseURL+"/")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch calendar page: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close response body", "error", err)
+		}
+	}()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read calendar body: %w", err)
+	}
+	html := string(bodyBytes)
+
+	return parseCalendarEmployeeHTML(html, targetYear)
+}
+
+// parseCalendarEmployeeHTML parses the calendar HTML, verifies the active year, and extracts all bank holidays.
+// The months are processed in positional order (index 0 = January, ..., index 11 = December),
+// making it completely independent of the display language.
+func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error) {
+	// 1. Verify/find the active year from <th class="year-title">YYYY</th>
+	yearRegex := regexp.MustCompile(`<th class="year-title">\s*(\d{4})\s*</th>`)
+	yearMatch := yearRegex.FindStringSubmatch(html)
+	year := targetYear
+	if len(yearMatch) >= 2 {
+		var parsedYear int
+		if _, err := fmt.Sscanf(yearMatch[1], "%d", &parsedYear); err == nil {
+			year = parsedYear
+		}
+	}
+
+	if year != targetYear {
+		slog.Warn("⚠️ Calendar active year differs from target year", "calendarYear", year, "targetYear", targetYear)
+	}
+
+	// 2. Extract each month container: <div class="month-container ...">...</div> or <table class="month">
+	// We match each month-container or month table with its month-title
+	monthRegex := regexp.MustCompile(`(?s)<(?:div|table)[^>]*class="[^"]*month(?:-container)?[^"]*"[^>]*>.*?<th class="month-title"[^>]*>([^<]+)</th>(.*?)</table>`)
+	monthMatches := monthRegex.FindAllStringSubmatch(html, -1)
+	if len(monthMatches) == 0 {
+		// Fallback: match <table class="month"> directly
+		monthRegex = regexp.MustCompile(`(?s)<table[^>]*class="[^"]*month[^"]*"[^>]*>.*?<th class="month-title"[^>]*>([^<]+)</th>(.*?)</table>`)
+		monthMatches = monthRegex.FindAllStringSubmatch(html, -1)
+	}
+
+	if len(monthMatches) == 0 {
+		return nil, fmt.Errorf("no months found in calendar HTML")
+	}
+
+	dayRegex := regexp.MustCompile(`(?s)<td[^>]*class="([^"]*styled-day[^"]*)"([^>]*)>.*?<div class="day-content"[^>]*>(\d+)</div>.*?</td>`)
+
+	var bankHolidays []time.Time
+	seen := make(map[string]bool)
+
+	loc := time.Now().Location()
+
+	for idx, m := range monthMatches {
+		month := time.Month(idx + 1)
+		if month > time.December {
+			break
+		}
+
+		tableBody := m[2]
+		dayMatches := dayRegex.FindAllStringSubmatch(tableBody, -1)
+
+		for _, dm := range dayMatches {
+			tdAttrs := dm[2]
+			dayStr := strings.TrimSpace(dm[3])
+
+			var day int
+			if _, err := fmt.Sscanf(dayStr, "%d", &day); err != nil {
+				continue
+			}
+
+			// Exclude personal requested vacation color: rgb(17, 100, 22)
+			// Personal vacations are handled via the vacation widget / "holidays" field.
+			if strings.Contains(tdAttrs, "17, 100, 22") || strings.Contains(tdAttrs, "17,100,22") {
+				continue
+			}
+
+			dateKey := fmt.Sprintf("%04d-%02d-%02d", year, int(month), day)
+			if !seen[dateKey] {
+				seen[dateKey] = true
+				holidayDate := time.Date(year, month, day, 0, 0, 0, 0, loc)
+				bankHolidays = append(bankHolidays, holidayDate)
+			}
+		}
+	}
+
+	return bankHolidays, nil
 }
 
 // loadCalendarPanel triggers the calendar widget on the MyTeam2Go home page via a JSF
