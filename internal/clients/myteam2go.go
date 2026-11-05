@@ -454,7 +454,13 @@ func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, target
 			return nil, fmt.Errorf("failed to read redirect response: %w", err)
 		}
 		redirHTML := string(redirBytes)
-		slog.Debug("📄 Calendar page received", "htmlLen", len(redirHTML), "containsMonth", strings.Contains(redirHTML, "month"), "containsYearTitle", strings.Contains(redirHTML, "year-title"))
+		slog.Debug("📄 Calendar page received",
+			"htmlLen", len(redirHTML),
+			"containsMonth", strings.Contains(redirHTML, "month"),
+			"containsYearTitle", strings.Contains(redirHTML, "year-title"),
+			"containsCalendar", strings.Contains(strings.ToLower(redirHTML), "calendar"),
+			"finalURL", redirResp.Request.URL.String(),
+		)
 		return parseCalendarEmployeeHTML(redirHTML, targetYear)
 	}
 
@@ -500,20 +506,28 @@ func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error)
 	}
 
 	if len(monthMatches) == 0 {
-		idx := strings.Index(html, "month")
+		// Log page title or form names to understand which page this is
+		titleRegex := regexp.MustCompile(`(?i)<title>(.*?)</title>`)
+		pageTitle := ""
+		if tm := titleRegex.FindStringSubmatch(html); len(tm) >= 2 {
+			pageTitle = tm[1]
+		}
+		slog.Warn("⚠️ No calendar month tables found in page", "pageTitle", pageTitle, "htmlLength", len(html))
+
+		idx := strings.Index(strings.ToLower(html), "calendar")
 		snippet := ""
 		if idx != -1 {
-			start := idx - 200
+			start := idx - 100
 			if start < 0 {
 				start = 0
 			}
-			end := idx + 400
+			end := idx + 300
 			if end > len(html) {
 				end = len(html)
 			}
 			snippet = html[start:end]
 		}
-		slog.Debug("🔍 Calendar HTML around 'month' for debugging", "idx", idx, "snippetAroundMonth", snippet)
+		slog.Debug("🔍 Calendar HTML around 'calendar' for debugging", "snippetAroundCalendar", snippet)
 		return nil, fmt.Errorf("no months found in calendar HTML")
 	}
 
