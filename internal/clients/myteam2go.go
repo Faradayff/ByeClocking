@@ -514,20 +514,24 @@ func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error)
 		}
 		slog.Warn("⚠️ No calendar month tables found in page", "pageTitle", pageTitle, "htmlLength", len(html))
 
-		idx := strings.Index(strings.ToLower(html), "calendar")
+		// Search for calendar-header which appeared in the css snippet: .calendar-header .next, .calendar-header .prev
+		idx := strings.Index(html, "calendar-header")
+		if idx == -1 {
+			idx = strings.Index(strings.ToLower(html), "calendar")
+		}
 		snippet := ""
 		if idx != -1 {
 			start := idx - 100
 			if start < 0 {
 				start = 0
 			}
-			end := idx + 300
+			end := idx + 600
 			if end > len(html) {
 				end = len(html)
 			}
 			snippet = html[start:end]
 		}
-		slog.Debug("🔍 Calendar HTML around 'calendar' for debugging", "snippetAroundCalendar", snippet)
+		slog.Debug("🔍 Calendar HTML around 'calendar-header' for debugging", "snippet", snippet)
 		return nil, fmt.Errorf("no months found in calendar HTML")
 	}
 
