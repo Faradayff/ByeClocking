@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,10 @@ func loadHolidayCache() holidayCache {
 		if !os.IsNotExist(err) {
 			slog.Warn("⚠️ IsHoliday: could not read holiday cache", "error", err)
 		}
+		return holidayCache{}
+	}
+
+	if len(strings.TrimSpace(string(data))) == 0 {
 		return holidayCache{}
 	}
 

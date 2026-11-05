@@ -342,32 +342,122 @@ func (c *MyTeam2GoClocker) IsPersonalHoliday(ctx context.Context, today time.Tim
 }
 
 // fetchAndParseBankHolidays retrieves the employee calendar page and extracts all bank holiday
-// dates for the specified year.
+// dates for the specified year by clicking "Ver Calendario>" on home.xhtml.
 func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, targetYear int) ([]time.Time, error) {
-	calURL := c.baseURL + "/pages/employeePortal/calendarEmployee.xhtml"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, calURL, nil)
+	homeURL := c.baseURL + "/home.xhtml"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create calendar request: %w", err)
+		return nil, fmt.Errorf("failed to create home request: %w", err)
 	}
 	c.setBrowserHeaders(req, c.baseURL+"/")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch calendar page: %w", err)
+		return nil, fmt.Errorf("failed to fetch home page: %w", err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close response body", "error", err)
+			slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close home response body", "error", err)
 		}
 	}()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read calendar body: %w", err)
+		return nil, fmt.Errorf("failed to read home body: %w", err)
 	}
-	html := string(bodyBytes)
+	homeHTML := string(bodyBytes)
 
-	return parseCalendarEmployeeHTML(html, targetYear)
+	// Extract ViewState
+	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	vsMatches := viewStateRegex.FindStringSubmatch(homeHTML)
+	if len(vsMatches) < 2 {
+		return nil, fmt.Errorf("could not find ViewState on home page")
+	}
+	viewState := vsMatches[1]
+
+	// Find the "Ver Calendario" button ID
+	// Matches: <a id="(homeForm:j_idt\d+)"[^>]*>Ver Calendario&gt;</a>
+	calBtnRegex := regexp.MustCompile(`id="(homeForm:[^"]+)"[^>]*>Ver Calendario(?:&gt;|>)?</a>`)
+	calBtnMatches := calBtnRegex.FindStringSubmatch(homeHTML)
+	if len(calBtnMatches) < 2 {
+		return nil, fmt.Errorf("could not find 'Ver Calendario' link in home page")
+	}
+	calBtnID := calBtnMatches[1]
+	slog.Debug("🔗 Found 'Ver Calendario' link", "buttonID", calBtnID)
+
+	// Send POST simulating PrimeFaces.ab({s:"homeForm:j_idt...", f:"homeForm", p:"homeForm:j_idt..."})
+	formData := url.Values{}
+	formData.Set("jakarta.faces.partial.ajax", "true")
+	formData.Set("jakarta.faces.source", calBtnID)
+	formData.Set("jakarta.faces.partial.execute", calBtnID)
+	formData.Set("jakarta.faces.partial.render", "@all")
+	formData.Set(calBtnID, calBtnID)
+	formData.Set("homeForm", "homeForm")
+	formData.Set("jakarta.faces.ViewState", viewState)
+
+	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(formData.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create click calendar request: %w", err)
+	}
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	postReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+	postReq.Header.Set("Faces-Request", "partial/ajax")
+	postReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	c.setBrowserHeaders(postReq, homeURL)
+
+	postResp, err := c.client.Do(postReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute click calendar request: %w", err)
+	}
+	defer func() {
+		if err := postResp.Body.Close(); err != nil {
+			slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close click response body", "error", err)
+		}
+	}()
+
+	postBytes, err := io.ReadAll(postResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read click calendar response: %w", err)
+	}
+	postBody := string(postBytes)
+
+	// Check if the response contains a redirect URL: <redirect url="...">
+	redirectRegex := regexp.MustCompile(`<redirect url="([^"]+)"`)
+	if redirMatch := redirectRegex.FindStringSubmatch(postBody); len(redirMatch) >= 2 {
+		redirectURL := redirMatch[1]
+		if !strings.HasPrefix(redirectURL, "http") {
+			if !strings.HasPrefix(redirectURL, "/") {
+				redirectURL = "/" + redirectURL
+			}
+			redirectURL = c.baseURL + redirectURL
+		}
+		slog.Debug("🔄 Following calendar redirect", "url", redirectURL)
+
+		redirReq, err := http.NewRequestWithContext(ctx, http.MethodGet, redirectURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create redirect request: %w", err)
+		}
+		c.setBrowserHeaders(redirReq, homeURL)
+
+		redirResp, err := c.client.Do(redirReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to follow calendar redirect: %w", err)
+		}
+		defer func() {
+			if err := redirResp.Body.Close(); err != nil {
+				slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close redirect response body", "error", err)
+			}
+		}()
+
+		redirBytes, err := io.ReadAll(redirResp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read redirect response: %w", err)
+		}
+		return parseCalendarEmployeeHTML(string(redirBytes), targetYear)
+	}
+
+	// If no redirect tag was found, parse the response directly (e.g. if the full page or updates were returned)
+	return parseCalendarEmployeeHTML(postBody, targetYear)
 }
 
 // parseCalendarEmployeeHTML parses the calendar HTML, verifies the active year, and extracts all bank holidays.

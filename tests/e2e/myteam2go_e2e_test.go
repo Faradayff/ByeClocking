@@ -127,6 +127,14 @@ func newFakeServer(t *testing.T) *fakeMyTeam2GoServer {
 </changes>
 </partial-response>`, fs.buildWorkAssistanceFormHTML(state, btnName))
 
+		// ── Ver Calendario link click ────────────────────────────────────
+		case strings.HasPrefix(source, "homeForm:j_idt"):
+			w.Header().Set("Content-Type", "application/xml; charset=UTF-8")
+			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<partial-response>
+<redirect url="/pages/employeePortal/calendarEmployee.xhtml"></redirect>
+</partial-response>`)
+
 		// ── Calendar widget ─────────────────────────────────────────────
 		case strings.HasPrefix(source, "homePartialLoadings:"):
 			today := time.Now()
@@ -244,6 +252,7 @@ loadCalendaryWidget = function() {
 %s
 <button name="workAssistanceForm:j_idt999"><span>Guardar</span></button>
 </form>
+<a id="homeForm:j_idt1407" href="#" class="ui-commandlink ui-widget" onclick="PrimeFaces.ab({s:&quot;homeForm:j_idt1407&quot;});">Ver Calendario&gt;</a>
 </body></html>`, options)
 }
 
@@ -415,6 +424,19 @@ func TestMyTeam2Go_IsHoliday_BankHoliday_FromWebAndCache(t *testing.T) {
 %s`, today.Year(), monthsHTML)
 	})
 
+	mux.HandleFunc("/home.xhtml", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, noHolidayHomeHTML())
+			return
+		}
+		// POST click "Ver Calendario"
+		w.Header().Set("Content-Type", "application/xml; charset=UTF-8")
+		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<partial-response>
+<redirect url="/pages/employeePortal/calendarEmployee.xhtml"></redirect>
+</partial-response>`)
+	})
+
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
@@ -471,7 +493,16 @@ func TestMyTeam2Go_IsHoliday_NewYear_Reset(t *testing.T) {
 	})
 
 	mux.HandleFunc("/home.xhtml", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, noHolidayHomeHTML())
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, noHolidayHomeHTML())
+			return
+		}
+		// POST click "Ver Calendario"
+		w.Header().Set("Content-Type", "application/xml; charset=UTF-8")
+		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<partial-response>
+<redirect url="/pages/employeePortal/calendarEmployee.xhtml"></redirect>
+</partial-response>`)
 	})
 
 	server := httptest.NewServer(mux)
@@ -489,6 +520,7 @@ func noHolidayHomeHTML() string {
 	return `<!DOCTYPE html><html><body>
 <input name="jakarta.faces.ViewState" value="home-vs-111">
 <div id="topMenuIdForm:menuWork1"></div>
+<a id="homeForm:j_idt1407" href="#" class="ui-commandlink ui-widget">Ver Calendario&gt;</a>
 <script id="homePartialLoadings:j_idtCAL">
 loadCalendaryWidget = function() {
     return PrimeFaces.ab({s:"homePartialLoadings:j_idtCAL", f:"homePartialLoadings",
