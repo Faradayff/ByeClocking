@@ -196,10 +196,9 @@ func TestRunner_Holiday(t *testing.T) {
 }
 
 // TestRunner_Friday verifies that on Fridays the runner uses FridayTimes and
-// skips lunch (no Lunchtime defined for Friday path, and baseCfg has Lunchtime set,
-// but isSummer=false and Friday uses FridayTimes which yields hasLunch=true via
-// the lunchtime being still in cfg — so on Friday WITH lunch we still get 4 calls).
-// This test checks that FridayTimes are used (clock-in at the friday time).
+// skips lunch: randomizeHours sets hasLunch=false on Friday (see
+// TestRandomizeHoursFriday in internal/core/schedule_test.go), so only
+// ClockIn/ClockOut are executed, with the Friday-specific times.
 func TestRunner_Friday(t *testing.T) {
 	if time.Now().Weekday() != time.Friday {
 		t.Skip("TestRunner_Friday requires running on a Friday; skipping")
@@ -212,14 +211,14 @@ func TestRunner_Friday(t *testing.T) {
 
 	done := runnerDone(ctx, cfg, mock)
 
-	ok := waitForCalls(t, mock, 4, 5*time.Second)
+	ok := waitForCalls(t, mock, 2, 5*time.Second)
 	cancel()
 	<-done
 
 	assert.True(t, ok, "runner should have recorded clock actions on Friday")
 	calls := mock.getCalls()
-	// On Friday with lunch configured, all 4 actions run
-	assert.Equal(t, []string{"ClockIn", "ClockPause", "ClockResume", "ClockOut"}, calls)
+	// Friday uses FridayTimes and has no lunch break
+	assert.Equal(t, []string{"ClockIn", "ClockOut"}, calls)
 }
 
 // TestRunner_Summer verifies that during summer the runner skips lunch and uses SummerTimes.

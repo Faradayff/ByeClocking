@@ -2,7 +2,9 @@ package clients
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"maps"
@@ -10,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -207,14 +210,52 @@ func (c *MyTeam2GoClocker) ClockResume(ctx context.Context) error {
 	return nil
 }
 
-// IsHoliday checks if the current day is a vacation day by inspecting the approved
-// vacation requests shown on the MyTeam2Go home page.
-// The vacation calendar panel is loaded dynamically via AJAX, so after fetching the
-// initial home page we trigger the calendar panel the same way the browser does.
-// On any network or parsing failure the result falls back to the on-disk holiday cache.
-// On success the cache is updated with the freshly retrieved vacation ranges and any
-// expired ranges (end date strictly before today) are pruned from the cache file.
+// IsHoliday checks if the current day is a holiday (either a bank holiday or a personal holiday).
 func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
+	today := time.Now()
+
+	return c.IsBankHoliday(ctx, today) || c.IsPersonalHoliday(ctx, today)
+}
+
+// IsBankHoliday checks if today is an official bank holiday.
+// It maintains a cache of bank holidays for the current year, which is reset on January 1st
+// (or when the current year's bank holidays are missing). If missing, it fetches the full calendar
+// from /pages/employeePortal/calendarEmployee.xhtml?i=0 and extracts all bank holidays.
+func (c *MyTeam2GoClocker) IsBankHoliday(ctx context.Context, today time.Time) bool {
+	currentYear := today.Year()
+
+	cache := loadHolidayCache()
+
+	if !hasBankHolidaysForYear(cache, currentYear) {
+		slog.Info("📅 Bank holidays for current year not found in cache, fetching from calendar", "year", currentYear)
+		cache.BankHolidays = nil
+
+		if err := c.Login(ctx); err != nil {
+			slog.Error("❌ IsBankHoliday: login failed while trying to fetch calendar", "error", err)
+		} else {
+			bankHolidays, err := c.fetchAndParseBankHolidays(ctx, currentYear)
+			if err != nil {
+				slog.Warn("⚠️ IsBankHoliday: failed to fetch bank holidays from calendar", "error", err)
+			} else {
+				cache.BankHolidays = bankHolidays
+				cache = saveHolidayCache(cache)
+				slog.Info("💾 Saved bank holidays to cache", "year", currentYear, "count", len(bankHolidays))
+			}
+		}
+	}
+
+	if isBankHolidayInCache(cache, today) {
+		slog.Debug("🏖️ IsHoliday: today is a bank holiday (from cache)", "date", today.Format("2006-01-02"))
+		return true
+	}
+
+	return false
+}
+
+// IsPersonalHoliday checks if today is within an approved personal vacation period.
+// It inspects the approved vacation requests shown on the MyTeam2Go home page.
+func (c *MyTeam2GoClocker) IsPersonalHoliday(ctx context.Context, today time.Time) bool {
+
 	if err := c.Login(ctx); err != nil {
 		slog.Error("❌ IsHoliday: login failed", "error", err)
 		return fallbackToCache("login failed")
@@ -241,12 +282,9 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	homeHTML := string(bodyBytes)
 
-	today := time.Now()
-
 	vacationRegex := regexp.MustCompile(`Vacaciones del\s+(\d{2}/\d{2}/\d{4})\s+a\s+(\d{2}/\d{2}/\d{4})`)
 
 	// The calendar section is rendered via a JSF AJAX partial request.
-	// Find the calendar topbar button (e.g. topMenuIdForm:menuCalendar...) and trigger it.
 	calendarHTML, err := c.loadCalendarPanel(ctx, homeHTML, homeURL)
 	if err != nil {
 		slog.Warn("⚠️ IsHoliday: could not load calendar panel via AJAX, falling back to home HTML", "error", err)
@@ -258,12 +296,11 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 
 	// The MyTeam2Go platform removes a vacation from the calendar widget the moment it
 	// starts (it becomes "active"), so the web response no longer contains it. We must
-	// preserve cached ranges that have not yet expired even when the web stopped listing
-	// them.
+	// preserve cached ranges that have not yet expired even when the web stopped listing them.
 	existingCache := loadHolidayCache()
 
 	if len(matches) == 0 {
-		slog.Debug("📭 IsHoliday: no vacation ranges found on web, checking cache", "cacheRanges", len(existingCache.Ranges))
+		slog.Debug("📭 IsHoliday: no vacation ranges found on web, checking cache", "cacheHolidays", len(existingCache.Holidays))
 		isHoliday := isHolidayInCache(existingCache)
 		if isHoliday {
 			slog.Debug("🏖️ IsHoliday: today is within a vacation period (from cache)")
@@ -274,10 +311,6 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	}
 
 	// Build updated cache by merging freshly retrieved ranges with the existing cache.
-	// Only ranges whose end date is strictly in the past are pruned (handled inside
-	// loadHolidayCache/saveHolidayCache via pruneExpiredRanges).
-
-	// Index web-fetched ranges by start date for deduplication.
 	webRanges := make(map[time.Time]holidayRange)
 	for _, m := range matches {
 		startDate, err1 := time.ParseInLocation("02/01/2006", m[1], today.Location())
@@ -289,10 +322,8 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 		webRanges[startDate] = holidayRange{Start: startDate, End: endDate}
 	}
 
-	// Merge: start with all non-expired cached ranges, then add/overwrite with
-	// anything the web returned (web data is authoritative for future ranges).
 	mergedMap := make(map[time.Time]holidayRange)
-	for _, r := range existingCache.Ranges {
+	for _, r := range existingCache.Holidays {
 		mergedMap[r.Start] = r
 	}
 	maps.Copy(mergedMap, webRanges)
@@ -302,9 +333,8 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 	}
 	slog.Debug("🔗 IsHoliday: vacations merged with cache", "count", len(mergedRanges), "vacations", mergedRanges)
 
-	// Save (which prunes expired ranges internally) and use the returned pruned cache
-	// as the source of truth — avoids a second disk read.
-	savedCache := saveHolidayCache(holidayCache{Ranges: mergedRanges})
+	existingCache.Holidays = mergedRanges
+	savedCache := saveHolidayCache(existingCache)
 	isHoliday := isHolidayInCache(savedCache)
 	if isHoliday {
 		slog.Debug("🏖️ IsHoliday: today is within a vacation period")
@@ -312,6 +342,584 @@ func (c *MyTeam2GoClocker) IsHoliday(ctx context.Context) bool {
 		slog.Debug("✅ IsHoliday: no vacation period matches today")
 	}
 	return isHoliday
+}
+
+// fetchAndParseBankHolidays retrieves the employee calendar page and extracts all bank holiday
+// dates for the specified year by clicking "Ver Calendario>" on home.xhtml.
+func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, targetYear int) ([]time.Time, error) {
+	homeURL := c.baseURL + "/home.xhtml"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, homeURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create home request: %w", err)
+	}
+	c.setBrowserHeaders(req, c.baseURL+"/")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch home page: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close home response body", "error", err)
+		}
+	}()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read home body: %w", err)
+	}
+	homeHTML := string(bodyBytes)
+
+	// Extract ViewState
+	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	vsMatches := viewStateRegex.FindStringSubmatch(homeHTML)
+	if len(vsMatches) < 2 {
+		return nil, fmt.Errorf("could not find ViewState on home page")
+	}
+	viewState := vsMatches[1]
+
+	// Find the "Ver Calendario" button ID
+	// Matches: <a id="(homeForm:j_idt\d+)"[^>]*>Ver Calendario&gt;</a>
+	calBtnRegex := regexp.MustCompile(`id="(homeForm:[^"]+)"[^>]*>Ver Calendario(?:&gt;|>)?</a>`)
+	calBtnMatches := calBtnRegex.FindStringSubmatch(homeHTML)
+	if len(calBtnMatches) < 2 {
+		return nil, fmt.Errorf("could not find 'Ver Calendario' link in home page")
+	}
+	calBtnID := calBtnMatches[1]
+	slog.Debug("🔗 Found 'Ver Calendario' link", "buttonID", calBtnID)
+
+	// Send POST simulating PrimeFaces.ab({s:"homeForm:j_idt...", f:"homeForm", p:"homeForm:j_idt..."})
+	formData := url.Values{}
+	formData.Set("jakarta.faces.partial.ajax", "true")
+	formData.Set("jakarta.faces.source", calBtnID)
+	formData.Set("jakarta.faces.partial.execute", calBtnID)
+	formData.Set("jakarta.faces.partial.render", "@all")
+	formData.Set(calBtnID, calBtnID)
+	formData.Set("homeForm", "homeForm")
+	formData.Set("jakarta.faces.ViewState", viewState)
+
+	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, homeURL, strings.NewReader(formData.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create click calendar request: %w", err)
+	}
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	postReq.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+	postReq.Header.Set("Faces-Request", "partial/ajax")
+	postReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	c.setBrowserHeaders(postReq, homeURL)
+
+	postResp, err := c.client.Do(postReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute click calendar request: %w", err)
+	}
+	defer func() {
+		if err := postResp.Body.Close(); err != nil {
+			slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close click response body", "error", err)
+		}
+	}()
+
+	postBytes, err := io.ReadAll(postResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read click calendar response: %w", err)
+	}
+	postBody := string(postBytes)
+
+	// Check if the response contains a redirect URL: <redirect url="...">
+	redirectRegex := regexp.MustCompile(`<redirect url="([^"]+)"`)
+	if redirMatch := redirectRegex.FindStringSubmatch(postBody); len(redirMatch) >= 2 {
+		redirectURL := redirMatch[1]
+		if !strings.HasPrefix(redirectURL, "http") {
+			if !strings.HasPrefix(redirectURL, "/") {
+				redirectURL = "/" + redirectURL
+			}
+			redirectURL = c.baseURL + redirectURL
+		}
+		slog.Debug("🔄 Following calendar redirect", "url", redirectURL)
+
+		redirReq, err := http.NewRequestWithContext(ctx, http.MethodGet, redirectURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create redirect request: %w", err)
+		}
+		c.setBrowserHeaders(redirReq, homeURL)
+
+		redirResp, err := c.client.Do(redirReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to follow calendar redirect: %w", err)
+		}
+		defer func() {
+			if err := redirResp.Body.Close(); err != nil {
+				slog.Warn("⚠️ fetchAndParseBankHolidays: failed to close redirect response body", "error", err)
+			}
+		}()
+
+		redirBytes, err := io.ReadAll(redirResp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read redirect response: %w", err)
+		}
+		redirHTML := string(redirBytes)
+		finalURL := redirResp.Request.URL.String()
+		slog.Debug("📄 Calendar page received",
+			"htmlLen", len(redirHTML),
+			"containsMonth", strings.Contains(redirHTML, "month"),
+			"containsYearTitle", strings.Contains(redirHTML, "year-title"),
+			"containsCalendar", strings.Contains(strings.ToLower(redirHTML), "calendar"),
+			"finalURL", finalURL,
+		)
+
+		// Strategy 1 (current MyTeam2Go): the page (or the browser-fired boot call)
+		// embeds the calendar events as a JSON array in <input id="dataCalendar" value="...">;
+		// the 12-month grid is rendered client-side (bootstrap-year-calendar).
+		// Bank holidays are the events flagged isFestives=true.
+		if data, err := extractDataCalendarJSON(redirHTML); err == nil {
+			if bankHolidays, perr := parseFestiveDates(data, targetYear); perr == nil {
+				slog.Info("✅ Bank holidays extracted from embedded dataCalendar JSON", "year", targetYear)
+				return bankHolidays, nil
+			} else {
+				slog.Warn("⚠️ dataCalendar JSON found but no parsable festives", "error", perr)
+			}
+		}
+
+		// Legacy: the page may carry server-rendered month tables directly.
+		if bankHolidays, err := parseCalendarEmployeeHTML(redirHTML, targetYear); err == nil {
+			slog.Info("✅ Bank holidays extracted from server-rendered month tables", "year", targetYear)
+			return bankHolidays, nil
+		}
+
+		// Strategy 2: the page is a JSF shell and the browser fires a boot AJAX call
+		// (a:true autoExec, or a function referenced from $(document).ready) that
+		// renders the TabView containing the dataCalendar JSON. Replay it.
+		slog.Debug("🔎 No dataCalendar JSON in initial HTML, replaying page boot AJAX calls", "finalURL", finalURL)
+		payload, bootErr := c.fetchAutoLoadedPanels(ctx, finalURL, redirHTML)
+		if bootErr != nil {
+			slog.Warn("⚠️ Could not replay page boot AJAX calls", "error", bootErr)
+		}
+		if payload != "" {
+			if data, err := extractDataCalendarJSON(payload); err == nil {
+				if bankHolidays, perr := parseFestiveDates(data, targetYear); perr == nil {
+					slog.Info("✅ Bank holidays extracted from the boot-call calendar JSON", "year", targetYear)
+					return bankHolidays, nil
+				} else {
+					slog.Warn("⚠️ Boot-call dataCalendar JSON found but no parsable festives", "error", perr)
+				}
+			}
+
+			// Strategy 3 (legacy fallback): server-rendered month tables, parsed by markup.
+			if bankHolidays, err := parseCalendarEmployeeHTML(payload, targetYear); err == nil {
+				slog.Info("✅ Bank holidays extracted from auto-loaded calendar panels (legacy markup)")
+				return bankHolidays, nil
+			}
+			if bankHolidays, err := parseCalendarEmployeeHTML(redirHTML+"\n"+payload, targetYear); err == nil {
+				slog.Info("✅ Bank holidays extracted from combined calendar content (legacy markup)")
+				return bankHolidays, nil
+			}
+		}
+
+		return nil, fmt.Errorf("could not extract bank holidays: no dataCalendar JSON nor month tables in the calendar page (initial HTML or boot calls)")
+	}
+
+	// If no redirect tag was found, parse the response directly (e.g. if the full page or updates were returned)
+	slog.Debug("📄 Direct response received", "htmlLen", len(postBody), "containsMonth", strings.Contains(postBody, "month"))
+	return parseCalendarEmployeeHTML(postBody, targetYear)
+}
+
+// autoLoadCall describes a PrimeFaces.ab AJAX call that a real browser fires when
+// the page boots, declared in inline scripts as e.g.:
+//
+//	loadCalendarEmployee = function() {return PrimeFaces.ab({s:"calendarForm:j_idt900",f:"calendarForm",u:"calendarForm:yearsContent",a:true,pa:arguments[0]});}
+//
+// and either marked auto-executed (a:true) or invoked from a $(document).ready(...) block.
+type autoLoadCall struct {
+	source string
+	form   string
+	update string
+}
+
+// pageBootFuncRegex finds functions of the shape
+// `name = function() {return PrimeFaces.ab({...});}` allowing nested helper
+// functions (onst/onco) inside the options blob. The options end at the first `});`.
+var pageBootFuncRegex = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*=\s*function\s*\(\s*\)\s*\{\s*return\s+PrimeFaces\.ab\(\{(.+?)\}\)`)
+
+// readyBlockRegex finds `$(document).ready(function(){ ... });` boot blocks; the
+// zero-argument function calls inside them are the ones fired at page load.
+var readyBlockRegex = regexp.MustCompile(`\$\(document\)\.ready\(\s*function\s*\([^)]*\)\s*\{([^{}]{0,600}?)\}`)
+
+var zeroArgCallRegex = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*\(\s*\)`)
+
+// findPageBootCalls extracts the PrimeFaces.ab functions the browser fires on page
+// load: definitions with a:true (autoExecute) or defined functions referenced from
+// $(document).ready blocks. Results are kept in document order.
+func findPageBootCalls(pageHTML string) []autoLoadCall {
+	calledAtBoot := map[string]bool{}
+	for _, b := range readyBlockRegex.FindAllStringSubmatch(pageHTML, -1) {
+		for _, nm := range zeroArgCallRegex.FindAllStringSubmatch(b[1], -1) {
+			calledAtBoot[nm[1]] = true
+		}
+	}
+
+	var calls []autoLoadCall
+	seen := map[string]bool{}
+	for _, m := range pageBootFuncRegex.FindAllStringSubmatch(pageHTML, -1) {
+		name, opts := m[1], m[2]
+		if !strings.Contains(opts, "a:true") && !calledAtBoot[name] {
+			continue
+		}
+		source, form := extractABOpt(opts, "s"), extractABOpt(opts, "f")
+		if source == "" || form == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		calls = append(calls, autoLoadCall{source: source, form: form, update: extractABOpt(opts, "u")})
+	}
+	return calls
+}
+
+// extractABOpt returns the value of an option of a PrimeFaces.ab({...}) call, e.g. extractABOpt(opts, "s").
+// Options are matched at the start of the call body or after a comma, so e.g. "s" never matches inside "ps".
+func extractABOpt(opts, key string) string {
+	m := regexp.MustCompile(`(?:^|,)\s*` + key + `:\s*"([^"]+)"`).FindStringSubmatch(opts)
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// fetchAutoLoadedPanels replays the page's auto-executed PrimeFaces.ab AJAX calls
+// (the ones a real browser fires at page load) and returns the concatenated
+// contents of the returned <update> payloads.
+func (c *MyTeam2GoClocker) fetchAutoLoadedPanels(ctx context.Context, pageURL, pageHTML string) (string, error) {
+	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	vsMatches := viewStateRegex.FindStringSubmatch(pageHTML)
+	if len(vsMatches) < 2 {
+		return "", fmt.Errorf("could not find ViewState on calendar page")
+	}
+	viewState := vsMatches[1]
+
+	calls := findPageBootCalls(pageHTML)
+	if len(calls) == 0 {
+		return "", fmt.Errorf("no boot-fired PrimeFaces.ab calls (a:true or $(document).ready) found in calendar page")
+	}
+	slog.Debug("🤖 Page boot AJAX calls found", "count", len(calls))
+
+	// JSF rotates the ViewState after many partial requests; adopt the newest one
+	// when a response carries it (mirrors loadCalendarPanel).
+	currentVS := viewState
+	vsUpdateRegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^]]+)]]></update>`)
+
+	maxCalls := 4
+	if len(calls) > maxCalls {
+		calls = calls[:maxCalls]
+	}
+	var payloads []string
+	for i, call := range calls {
+		slog.Debug("🤖 Replaying boot call", "source", call.source, "form", call.form, "update", call.update)
+
+		render := call.update
+		if render == "" {
+			render = "@all"
+		}
+		data := url.Values{}
+		data.Set("jakarta.faces.partial.ajax", "true")
+		data.Set("jakarta.faces.source", call.source)
+		data.Set("jakarta.faces.partial.execute", call.source)
+		data.Set("jakarta.faces.partial.render", render)
+		data.Set(call.source, call.source)
+		data.Set(call.form, call.form)
+		data.Set("jakarta.faces.ViewState", currentVS)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, pageURL, strings.NewReader(data.Encode()))
+		if err != nil {
+			return "", fmt.Errorf("failed to create boot call request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+		req.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+		req.Header.Set("Faces-Request", "partial/ajax")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		c.setBrowserHeaders(req, pageURL)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("boot call request failed: %w", err)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		bodyStr := string(body)
+		slog.Debug("📥 Boot call response received", "index", i, "length", len(bodyStr))
+
+		if nv := vsUpdateRegex.FindStringSubmatch(bodyStr); len(nv) >= 2 {
+			currentVS = nv[1]
+		}
+		payloads = append(payloads, extractUpdatePayloads(bodyStr)...)
+
+		// The caller inspects payloads in order; stop firing once the calendar
+		// data (dataCalendar JSON) has appeared.
+		if strings.Contains(bodyStr, `id="dataCalendar"`) {
+			break
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if len(payloads) == 0 {
+		return "", fmt.Errorf("boot calls returned no payloads")
+	}
+	return strings.Join(payloads, "\n"), nil
+}
+
+// extractUpdatePayloads returns the contents of all <update> blocks of a JSF
+// partial-response, unwrapping CDATA sections and unescaping plain XML content.
+func extractUpdatePayloads(body string) []string {
+	updateRegex := regexp.MustCompile(`(?s)<update id="[^"]*"[^>]*>(.*?)</update>`)
+	var out []string
+	for _, m := range updateRegex.FindAllStringSubmatch(body, -1) {
+		content := strings.TrimSpace(m[1])
+		if after, ok := strings.CutPrefix(content, "<![CDATA["); ok {
+			content = after
+			content = strings.TrimSuffix(content, "]]>")
+		} else if content != "" {
+			content = html.UnescapeString(content)
+		}
+		if content != "" {
+			out = append(out, content)
+		}
+	}
+	return out
+}
+
+// dataCalendarRegex finds the hidden input carrying the calendar events JSON.
+// In the HTML the JSON quotes appear escaped (&quot;), so the attribute value
+// never contains a raw double quote and can be matched with [^"]*.
+var dataCalendarRegex = regexp.MustCompile(`(?s)<input[^>]*id="dataCalendar"[^>]*value="([^"]*)"`)
+var dataCalendarRegexAlt = regexp.MustCompile(`(?s)<input[^>]*value="(\[&quot;[^"]*)"[^>]*id="dataCalendar"[^>]*>`)
+
+// extractDataCalendarJSON returns the unescaped JSON array of calendar events
+// embedded in the page (or in a partial-response payload).
+func extractDataCalendarJSON(body string) (string, error) {
+	if m := dataCalendarRegex.FindStringSubmatch(body); len(m) >= 2 {
+		return html.UnescapeString(m[1]), nil
+	}
+	if m := dataCalendarRegexAlt.FindStringSubmatch(body); len(m) >= 2 {
+		return html.UnescapeString(m[1]), nil
+	}
+	return "", fmt.Errorf("could not find the dataCalendar JSON input")
+}
+
+// calendarEvent is the subset of the dataCalendar JSON we need.
+type calendarEvent struct {
+	IsFestives     bool   `json:"isFestives"`
+	DateAbsenceIni string `json:"dateAbsenceIni"`
+}
+
+var portalDateRegex = regexp.MustCompile(`([A-Za-zÀ-ÿ]{2,12})\s+(\d{1,2}),\s*(\d{4})`)
+
+// portalMonthNames maps month names (English and Spanish, full or abbreviated) to
+// their numeric value. The server formats dates with the default (English) locale,
+// but both are accepted to stay robust.
+var portalMonthNames = map[string]int{
+	"jan": 1, "january": 1, "ene": 1, "enero": 1,
+	"feb": 2, "february": 2, "febrero": 2,
+	"mar": 3, "march": 3, "marzo": 3,
+	"apr": 4, "april": 4, "abr": 4, "abril": 4,
+	"may": 5, "mayo": 5,
+	"jun": 6, "june": 6, "junio": 6,
+	"jul": 7, "july": 7, "julio": 7,
+	"aug": 8, "august": 8, "ago": 8, "agosto": 8,
+	"sep": 9, "sept": 9, "september": 9, "set": 9, "septiembre": 9,
+	"oct": 10, "october": 10, "octubre": 10,
+	"nov": 11, "november": 11, "noviembre": 11,
+	"dec": 12, "december": 12, "dic": 12, "diciembre": 12,
+}
+
+// parsePortalDate parses dates like "May 15, 2026, 12:00:00 AM" (or their Spanish
+// equivalents) into a date at midnight.
+func parsePortalDate(s string) (time.Time, bool) {
+	m := portalDateRegex.FindStringSubmatch(s)
+	if m == nil {
+		return time.Time{}, false
+	}
+	month, ok := portalMonthNames[strings.ToLower(strings.TrimSpace(m[1]))]
+	if !ok {
+		return time.Time{}, false
+	}
+	var day, year int
+	if _, err := fmt.Sscanf(m[2], "%d", &day); err != nil {
+		return time.Time{}, false
+	}
+	if _, err := fmt.Sscanf(m[3], "%d", &year); err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC), true
+}
+
+// parseFestiveDates extracts the bank holidays for the target year from the
+// dataCalendar JSON: the events flagged isFestives=true (national, autonomous and
+// local holidays). Personal absences (vacaciones, permisos...) are ignored here;
+// they keep being handled by IsPersonalHoliday.
+func parseFestiveDates(rawJSON string, targetYear int) ([]time.Time, error) {
+	var events []calendarEvent
+	if err := json.Unmarshal([]byte(rawJSON), &events); err != nil {
+		return nil, fmt.Errorf("invalid dataCalendar JSON: %w", err)
+	}
+
+	loc := time.Now().Location()
+	seen := make(map[string]bool)
+	festiveYears := make(map[int]bool)
+	var bankHolidays []time.Time
+	for _, e := range events {
+		if !e.IsFestives {
+			continue
+		}
+		d, ok := parsePortalDate(e.DateAbsenceIni)
+		if !ok {
+			continue
+		}
+		festiveYears[d.Year()] = true
+		if d.Year() != targetYear {
+			continue
+		}
+		// Some festive events may use a date range; the start date is the effective day.
+		key := fmt.Sprintf("%04d-%02d-%02d", d.Year(), int(d.Month()), d.Day())
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		bankHolidays = append(bankHolidays, time.Date(targetYear, d.Month(), d.Day(), 0, 0, 0, 0, loc))
+	}
+
+	if len(bankHolidays) == 0 {
+		// Report the years actually present so a year-range mismatch with the
+		// portal is obvious from the log (e.g. portal only offers 2027).
+		var years []string
+		for y := range festiveYears {
+			years = append(years, fmt.Sprintf("%d", y))
+		}
+		sort.Strings(years)
+		return nil, fmt.Errorf("no festive events (isFestives) for year %d in the calendar JSON (festive years present: %s)", targetYear, strings.Join(years, ", "))
+	}
+	sort.Slice(bankHolidays, func(i, j int) bool { return bankHolidays[i].Before(bankHolidays[j]) })
+	return bankHolidays, nil
+}
+
+// parseCalendarEmployeeHTML parses the calendar HTML, verifies the active year, and extracts all bank holidays.
+// The months are processed in positional order (index 0 = January, ..., index 11 = December),
+// making it completely independent of the display language.
+// NOTE: kept as a last-resort fallback — the current MyTeam2Go version renders the
+// year grid client-side (bootstrap-year-calendar) from the dataCalendar JSON instead.
+func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error) {
+	// 1. Verify/find the active year from <th class="year-title">YYYY</th>
+	yearRegex := regexp.MustCompile(`<th class="year-title">\s*(\d{4})\s*</th>`)
+	yearMatch := yearRegex.FindStringSubmatch(html)
+	year := targetYear
+	if len(yearMatch) >= 2 {
+		var parsedYear int
+		if _, err := fmt.Sscanf(yearMatch[1], "%d", &parsedYear); err == nil {
+			year = parsedYear
+		}
+	}
+
+	if year != targetYear {
+		slog.Warn("⚠️ Calendar active year differs from target year", "calendarYear", year, "targetYear", targetYear)
+	}
+
+	// 2. Extract each month container: <div class="month-container ...">...</div> or <table class="month">
+	// We match each month-container or month table with its month-title
+	monthRegex := regexp.MustCompile(`(?s)<(?:div|table)[^>]*class="[^"]*month(?:-container)?[^"]*"[^>]*>.*?<th[^>]*class="[^"]*month-title[^"]*"[^>]*>(?:<[^>]+>)*\s*([^<]+)\s*(?:<[^>]+>)*</th>(.*?)</table>`)
+	monthMatches := monthRegex.FindAllStringSubmatch(html, -1)
+	if len(monthMatches) == 0 {
+		// Fallback 1: match <table class="month"> directly
+		monthRegex = regexp.MustCompile(`(?s)<table[^>]*class="[^"]*month[^"]*"[^>]*>.*?<th[^>]*class="[^"]*month-title[^"]*"[^>]*>(?:<[^>]+>)*\s*([^<]+)\s*(?:<[^>]+>)*</th>(.*?)</table>`)
+		monthMatches = monthRegex.FindAllStringSubmatch(html, -1)
+	}
+	if len(monthMatches) == 0 {
+		// Fallback 2: match <table class="month">...</table> without requiring <th class="month-title">
+		fallbackTableRegex := regexp.MustCompile(`(?s)<table[^>]*class="[^"]*month[^"]*"[^>]*>(.*?)</table>`)
+		for _, ftm := range fallbackTableRegex.FindAllStringSubmatch(html, -1) {
+			monthMatches = append(monthMatches, []string{ftm[0], "", ftm[1]})
+		}
+	}
+
+	if len(monthMatches) == 0 {
+		// Log page title or form names to understand which page this is
+		titleRegex := regexp.MustCompile(`(?i)<title>(.*?)</title>`)
+		pageTitle := ""
+		if tm := titleRegex.FindStringSubmatch(html); len(tm) >= 2 {
+			pageTitle = tm[1]
+		}
+		slog.Warn("⚠️ No calendar month tables found in page",
+			"pageTitle", pageTitle,
+			"htmlLength", len(html),
+			"tableCount", strings.Count(html, "<table"),
+			"monthClassCount", strings.Count(html, `class="month`),
+			"monthTitleCount", strings.Count(html, "month-title"),
+			"styledDayCount", strings.Count(html, "styled-day"),
+			"dayContentCount", strings.Count(html, "day-content"),
+			"pageBootCalls", len(findPageBootCalls(html)),
+			"hasDataCalendar", strings.Contains(html, `id="dataCalendar"`),
+			"hasViewState", strings.Contains(html, "jakarta.faces.ViewState"),
+		)
+
+		// Search for calendar-header which appeared in the css snippet: .calendar-header .next, .calendar-header .prev
+		idx := strings.Index(html, "calendar-header")
+		if idx == -1 {
+			idx = strings.Index(strings.ToLower(html), "calendar")
+		}
+		snippet := ""
+		if idx != -1 {
+			start := idx - 100
+			if start < 0 {
+				start = 0
+			}
+			end := idx + 600
+			if end > len(html) {
+				end = len(html)
+			}
+			snippet = html[start:end]
+		}
+		slog.Debug("🔍 Calendar HTML around 'calendar-header' for debugging", "snippet", snippet)
+		return nil, fmt.Errorf("no months found in calendar HTML")
+	}
+
+	dayRegex := regexp.MustCompile(`(?s)<td[^>]*class="([^"]*styled-day[^"]*)"([^>]*)>.*?<div class="day-content"[^>]*>(\d+)</div>.*?</td>`)
+
+	var bankHolidays []time.Time
+	seen := make(map[string]bool)
+
+	loc := time.Now().Location()
+
+	for idx, m := range monthMatches {
+		month := time.Month(idx + 1)
+		if month > time.December {
+			break
+		}
+
+		tableBody := m[2]
+		dayMatches := dayRegex.FindAllStringSubmatch(tableBody, -1)
+
+		for _, dm := range dayMatches {
+			tdAttrs := dm[2]
+			dayStr := strings.TrimSpace(dm[3])
+
+			var day int
+			if _, err := fmt.Sscanf(dayStr, "%d", &day); err != nil {
+				continue
+			}
+
+			// Exclude personal requested vacation color: rgb(17, 100, 22)
+			// Personal vacations are handled via the vacation widget / "holidays" field.
+			if strings.Contains(tdAttrs, "17, 100, 22") || strings.Contains(tdAttrs, "17,100,22") {
+				continue
+			}
+
+			dateKey := fmt.Sprintf("%04d-%02d-%02d", year, int(month), day)
+			if !seen[dateKey] {
+				seen[dateKey] = true
+				holidayDate := time.Date(year, month, day, 0, 0, 0, 0, loc)
+				bankHolidays = append(bankHolidays, holidayDate)
+			}
+		}
+	}
+
+	return bankHolidays, nil
 }
 
 // loadCalendarPanel triggers the calendar widget on the MyTeam2Go home page via a JSF
