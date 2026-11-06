@@ -591,9 +591,7 @@ func (c *MyTeam2GoClocker) fetchAutoLoadedPanels(ctx context.Context, pageURL, p
 		_ = resp.Body.Close()
 		slog.Debug("📥 Auto-exec response received", "index", i, "length", len(body))
 
-		for _, payload := range extractUpdatePayloads(string(body)) {
-			payloads = append(payloads, payload)
-		}
+		payloads = append(payloads, extractUpdatePayloads(string(body))...)
 
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -611,7 +609,7 @@ func extractUpdatePayloads(body string) []string {
 	var out []string
 	for _, m := range updateRegex.FindAllStringSubmatch(body, -1) {
 		content := strings.TrimSpace(m[1])
-		if after, ok :=strings.CutPrefix(content, "<![CDATA["); ok  {
+		if after, ok := strings.CutPrefix(content, "<![CDATA["); ok {
 			content = after
 			content = strings.TrimSuffix(content, "]]>")
 		} else if content != "" {
