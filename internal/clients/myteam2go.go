@@ -245,7 +245,7 @@ func (c *MyTeam2GoClocker) IsBankHoliday(ctx context.Context, today time.Time) b
 	}
 
 	if isBankHolidayInCache(cache, today) {
-		slog.Info("🏖️ IsHoliday: today is a bank holiday (from cache)", "date", today.Format("2006-01-02"))
+		slog.Debug("🏖️ IsHoliday: today is a bank holiday (from cache)", "date", today.Format("2006-01-02"))
 		return true
 	}
 
