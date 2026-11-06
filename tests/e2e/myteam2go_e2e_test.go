@@ -516,6 +516,92 @@ func TestMyTeam2Go_IsHoliday_NewYear_Reset(t *testing.T) {
 	assert.True(t, calendarCalled, "should fetch new year calendar when cache has previous year")
 }
 
+// TestMyTeam2Go_IsHoliday_BankHoliday_AjaxAutoLoad checks the case where the
+// calendarEmployee.xhtml GET response is only a JSF shell: the 12-month grid is
+// delivered by an auto-executed PrimeFaces.ab AJAX call that a browser fires on
+// page load. The client must replay that call and parse the returned payload.
+func TestMyTeam2Go_IsHoliday_BankHoliday_AjaxAutoLoad(t *testing.T) {
+	_ = os.RemoveAll("cache")
+	defer func() { _ = os.RemoveAll("cache") }()
+
+	today := time.Now()
+	autoloadHits := 0
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/j_security_check", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "fake-session-ajax"})
+		http.Redirect(w, r, "/home.xhtml", http.StatusFound)
+	})
+
+	mux.HandleFunc("/pages/employeePortal/calendarEmployee.xhtml", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Shell page: no month tables, only the auto-exec script and the ViewState.
+			w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+			fmt.Fprint(w, `<!DOCTYPE html><html><body>
+<div id="calendarContent" class="ui-outputpanel ui-widget"></div>
+<input type="hidden" name="jakarta.faces.ViewState" id="j_id1:jakarta.faces.ViewState:0" value="cal-vs-777" autocomplete="off"/>
+<script id="calendarForm:j_idt900" type="text/javascript">
+loadCalendarEmployees = function() {return PrimeFaces.ab({s:"calendarForm:j_idt900",f:"calendarForm",u:"calendarContent",a:true,pa:arguments[0]});}</script>
+</body></html>`)
+			return
+		}
+
+		// POST — the auto-exec call fired by the client
+		autoloadHits++
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, "true", r.FormValue("jakarta.faces.partial.ajax"))
+		assert.Equal(t, "calendarForm:j_idt900", r.FormValue("jakarta.faces.source"))
+		assert.Equal(t, "cal-vs-777", r.FormValue("jakarta.faces.ViewState"))
+
+		monthsHTML := ""
+		for m := 1; m <= 12; m++ {
+			monthsHTML += fmt.Sprintf(`<div class="month-container col-xs-2"><table class="month">
+<thead><tr><th class="month-title">Mes %d</th></tr></thead>`, m)
+			if m == int(today.Month()) {
+				monthsHTML += fmt.Sprintf(`<tr><td class="day styled-day" style="background-color: rgb(210, 47, 50);"><div class="day-content">%d</div></td></tr>`, today.Day())
+			}
+			monthsHTML += `</table></div>`
+		}
+
+		w.Header().Set("Content-Type", "application/xml; charset=UTF-8")
+		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
+<partial-response>
+<changes>
+<update id="calendarContent"><![CDATA[
+<div class="calendar-header panel panel-default"><table><th class="year-title">%d</th></table></div>
+%s
+]]></update><update id="j_id1:jakarta.faces.ViewState:0"><![CDATA[cal-vs-778]]></update></changes>
+</partial-response>`, today.Year(), monthsHTML)
+	})
+
+	mux.HandleFunc("/home.xhtml", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, noHolidayHomeHTML())
+			return
+		}
+		// POST click "Ver Calendario"
+		w.Header().Set("Content-Type", "application/xml; charset=UTF-8")
+		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<partial-response>
+<redirect url="/pages/employeePortal/calendarEmployee.xhtml"></redirect>
+</partial-response>`)
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	jar, _ := cookiejar.New(nil)
+	clocker := clients.NewMyTeam2GoTestClocker(host, "u", "p", 0, 0, &http.Client{Jar: jar})
+
+	isHoliday := clocker.IsHoliday(context.Background())
+	assert.True(t, isHoliday, "today should be detected as a bank holiday from the auto-loaded calendar")
+	assert.Equal(t, 1, autoloadHits, "auto-exec call should be replayed exactly once")
+}
+
 func noHolidayHomeHTML() string {
 	return `<!DOCTYPE html><html><body>
 <input name="jakarta.faces.ViewState" value="home-vs-111">

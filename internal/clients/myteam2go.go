@@ -3,6 +3,7 @@ package clients
 import (
 	"context"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"maps"
@@ -454,19 +455,173 @@ func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, target
 			return nil, fmt.Errorf("failed to read redirect response: %w", err)
 		}
 		redirHTML := string(redirBytes)
+		finalURL := redirResp.Request.URL.String()
 		slog.Debug("📄 Calendar page received",
 			"htmlLen", len(redirHTML),
 			"containsMonth", strings.Contains(redirHTML, "month"),
 			"containsYearTitle", strings.Contains(redirHTML, "year-title"),
 			"containsCalendar", strings.Contains(strings.ToLower(redirHTML), "calendar"),
-			"finalURL", redirResp.Request.URL.String(),
+			"finalURL", finalURL,
 		)
-		return parseCalendarEmployeeHTML(redirHTML, targetYear)
+
+		if bankHolidays, err := parseCalendarEmployeeHTML(redirHTML, targetYear); err == nil {
+			return bankHolidays, nil
+		}
+
+		// The initial HTML is a JSF shell: MyTeam2Go renders dynamic content with
+		// auto-executed AJAX calls (e.g. `loadX = function(){return PrimeFaces.ab({s:...,f:...,a:true,...})}`)
+		// that a browser fires on page load. Replay them and parse the returned payloads.
+		slog.Debug("🔎 No month tables in initial HTML, replaying auto-executed AJAX panels", "finalURL", finalURL)
+
+		payload, autoErr := c.fetchAutoLoadedPanels(ctx, finalURL, redirHTML)
+		if autoErr != nil {
+			slog.Warn("⚠️ Could not replay auto-executed calendar panels", "error", autoErr)
+		}
+		if payload != "" {
+			if bankHolidays, err := parseCalendarEmployeeHTML(payload, targetYear); err == nil {
+				slog.Info("✅ Bank holidays extracted from auto-loaded calendar panels")
+				return bankHolidays, nil
+			}
+			// Some months may be spread across several <update> payloads; try the combined content.
+			if bankHolidays, err := parseCalendarEmployeeHTML(redirHTML+"\n"+payload, targetYear); err == nil {
+				slog.Info("✅ Bank holidays extracted from combined calendar content")
+				return bankHolidays, nil
+			}
+		}
+
+		return nil, fmt.Errorf("could not find month tables in the calendar page (initial HTML or auto-loaded panels)")
 	}
 
 	// If no redirect tag was found, parse the response directly (e.g. if the full page or updates were returned)
 	slog.Debug("📄 Direct response received", "htmlLen", len(postBody), "containsMonth", strings.Contains(postBody, "month"))
 	return parseCalendarEmployeeHTML(postBody, targetYear)
+}
+
+// autoLoadCall describes a PrimeFaces auto-executed AJAX call found in the page
+// inline scripts, e.g.:
+//
+//	loadCalendarEmployee = function() {return PrimeFaces.ab({s:"calendarForm:j_idt900",f:"calendarForm",u:"calendarForm:yearsContent",a:true,pa:arguments[0]});}
+type autoLoadCall struct {
+	source string
+	form   string
+	update string
+}
+
+var abAutoCallRegex = regexp.MustCompile(`=\s*function\s*\(\s*\)\s*\{\s*return\s+PrimeFaces\.ab\(\{([^}]+)\}\)`)
+
+// findAutoLoadCalls extracts the PrimeFaces.ab(...) calls declared as
+// `name = function() {return PrimeFaces.ab({...});}` and only keeps those with
+// a:true (autoExecute), which are the ones a browser fires on page load.
+func findAutoLoadCalls(pageHTML string) []autoLoadCall {
+	var calls []autoLoadCall
+	for _, m := range abAutoCallRegex.FindAllStringSubmatch(pageHTML, -1) {
+		opts := m[1]
+		if !strings.Contains(opts, "a:true") {
+			continue
+		}
+		source, form := extractABOpt(opts, "s"), extractABOpt(opts, "f")
+		if source == "" || form == "" {
+			continue
+		}
+		calls = append(calls, autoLoadCall{source: source, form: form, update: extractABOpt(opts, "u")})
+	}
+	return calls
+}
+
+// extractABOpt returns the value of an option of a PrimeFaces.ab({...}) call, e.g. extractABOpt(opts, "s").
+// Options are matched at the start of the call body or after a comma, so e.g. "s" never matches inside "ps".
+func extractABOpt(opts, key string) string {
+	m := regexp.MustCompile(`(?:^|,)\s*` + key + `:\s*"([^"]+)"`).FindStringSubmatch(opts)
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// fetchAutoLoadedPanels replays the page's auto-executed PrimeFaces.ab AJAX calls
+// (the ones a real browser fires at page load) and returns the concatenated
+// contents of the returned <update> payloads.
+func (c *MyTeam2GoClocker) fetchAutoLoadedPanels(ctx context.Context, pageURL, pageHTML string) (string, error) {
+	viewStateRegex := regexp.MustCompile(`name="jakarta\.faces\.ViewState"[^>]*value="([^"]+)"`)
+	vsMatches := viewStateRegex.FindStringSubmatch(pageHTML)
+	if len(vsMatches) < 2 {
+		return "", fmt.Errorf("could not find ViewState on calendar page")
+	}
+	viewState := vsMatches[1]
+
+	calls := findAutoLoadCalls(pageHTML)
+	if len(calls) == 0 {
+		return "", fmt.Errorf("no auto-executed PrimeFaces.ab calls found in calendar page")
+	}
+	slog.Debug("🤖 Auto-executed AJAX calls found", "count", len(calls))
+
+	var payloads []string
+	for i, call := range calls {
+		slog.Debug("🤖 Replaying auto-exec call", "source", call.source, "form", call.form, "update", call.update)
+
+		render := call.update
+		if render == "" {
+			render = "@all"
+		}
+		data := url.Values{}
+		data.Set("jakarta.faces.partial.ajax", "true")
+		data.Set("jakarta.faces.source", call.source)
+		data.Set("jakarta.faces.partial.execute", call.source)
+		data.Set("jakarta.faces.partial.render", render)
+		data.Set(call.source, call.source)
+		data.Set(call.form, call.form)
+		data.Set("jakarta.faces.ViewState", viewState)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, pageURL, strings.NewReader(data.Encode()))
+		if err != nil {
+			return "", fmt.Errorf("failed to create auto-exec request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+		req.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+		req.Header.Set("Faces-Request", "partial/ajax")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		c.setBrowserHeaders(req, pageURL)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("auto-exec request failed: %w", err)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		slog.Debug("📥 Auto-exec response received", "index", i, "length", len(body))
+
+		for _, payload := range extractUpdatePayloads(string(body)) {
+			payloads = append(payloads, payload)
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if len(payloads) == 0 {
+		return "", fmt.Errorf("auto-exec calls returned no payloads")
+	}
+	return strings.Join(payloads, "\n"), nil
+}
+
+// extractUpdatePayloads returns the contents of all <update> blocks of a JSF
+// partial-response, unwrapping CDATA sections and unescaping plain XML content.
+func extractUpdatePayloads(body string) []string {
+	updateRegex := regexp.MustCompile(`(?s)<update id="[^"]*"[^>]*>(.*?)</update>`)
+	var out []string
+	for _, m := range updateRegex.FindAllStringSubmatch(body, -1) {
+		content := strings.TrimSpace(m[1])
+		if after, ok :=strings.CutPrefix(content, "<![CDATA["); ok  {
+			content = after
+			content = strings.TrimSuffix(content, "]]>")
+		} else if content != "" {
+			content = html.UnescapeString(content)
+		}
+		if content != "" {
+			out = append(out, content)
+		}
+	}
+	return out
 }
 
 // parseCalendarEmployeeHTML parses the calendar HTML, verifies the active year, and extracts all bank holidays.
@@ -512,7 +667,17 @@ func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error)
 		if tm := titleRegex.FindStringSubmatch(html); len(tm) >= 2 {
 			pageTitle = tm[1]
 		}
-		slog.Warn("⚠️ No calendar month tables found in page", "pageTitle", pageTitle, "htmlLength", len(html))
+		slog.Warn("⚠️ No calendar month tables found in page",
+			"pageTitle", pageTitle,
+			"htmlLength", len(html),
+			"tableCount", strings.Count(html, "<table"),
+			"monthClassCount", strings.Count(html, `class="month`),
+			"monthTitleCount", strings.Count(html, "month-title"),
+			"styledDayCount", strings.Count(html, "styled-day"),
+			"dayContentCount", strings.Count(html, "day-content"),
+			"autoExecCalls", len(findAutoLoadCalls(html)),
+			"hasViewState", strings.Contains(html, "jakarta.faces.ViewState"),
+		)
 
 		// Search for calendar-header which appeared in the css snippet: .calendar-header .next, .calendar-header .prev
 		idx := strings.Index(html, "calendar-header")
