@@ -516,65 +516,74 @@ func TestMyTeam2Go_IsHoliday_NewYear_Reset(t *testing.T) {
 	assert.True(t, calendarCalled, "should fetch new year calendar when cache has previous year")
 }
 
-// TestMyTeam2Go_IsHoliday_BankHoliday_AjaxAutoLoad checks the case where the
-// calendarEmployee.xhtml GET response is only a JSF shell: the 12-month grid is
-// delivered by an auto-executed PrimeFaces.ab AJAX call that a browser fires on
-// page load. The client must replay that call and parse the returned payload.
-func TestMyTeam2Go_IsHoliday_BankHoliday_AjaxAutoLoad(t *testing.T) {
+// TestMyTeam2Go_IsHoliday_BankHoliday_DataCalendarJSON models the current
+// MyTeam2Go flow: the calendarEmployee.xhtml GET returns a JSF shell without any
+// month grid. The browser fires $(document).ready → updateTabView (a PrimeFaces.ab
+// call whose options include nested onst/onco functions), and that response carries
+// the calendar events as a JSON array in <input id="dataCalendar" value="...">.
+// Bank holidays are the events flagged isFestives=true.
+func TestMyTeam2Go_IsHoliday_BankHoliday_DataCalendarJSON(t *testing.T) {
 	_ = os.RemoveAll("cache")
 	defer func() { _ = os.RemoveAll("cache") }()
 
 	today := time.Now()
-	autoloadHits := 0
+	bootHits := 0
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/j_security_check", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "fake-session-ajax"})
+		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "fake-session-json"})
 		http.Redirect(w, r, "/home.xhtml", http.StatusFound)
 	})
 
 	mux.HandleFunc("/pages/employeePortal/calendarEmployee.xhtml", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			// Shell page: no month tables, only the auto-exec script and the ViewState.
+			// Shell: no month tables, no dataCalendar, just the boot call the
+			// browser fires at load and the ViewState.
 			w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 			fmt.Fprint(w, `<!DOCTYPE html><html><body>
-<div id="calendarContent" class="ui-outputpanel ui-widget"></div>
-<input type="hidden" name="jakarta.faces.ViewState" id="j_id1:jakarta.faces.ViewState:0" value="cal-vs-777" autocomplete="off"/>
-<script id="calendarForm:j_idt900" type="text/javascript">
-loadCalendarEmployees = function() {return PrimeFaces.ab({s:"calendarForm:j_idt900",f:"calendarForm",u:"calendarContent",a:true,pa:arguments[0]});}</script>
+<form id="entityIdForm" name="entityIdForm" method="post" action="/pages/employeePortal/calendarEmployee.xhtml">
+<input type="hidden" name="entityIdForm" value="entityIdForm"/>
+<input type="hidden" name="jakarta.faces.ViewState" id="j_id1:jakarta.faces.ViewState:9" value="cal-vs-777" autocomplete="off"/>
+</form>
+<script>
+var entityIdJs = ''; $(document).ready(function() { updateTabView(); });
+updateTabView = function() {return PrimeFaces.ab({s:"entityIdForm:j_idt761",f:"entityIdForm",u:"tabView",onst:function(cfg){showLoading();},onco:function(xhr,status,args,data){hideLoading();;},pa:arguments[0]});}
+</script>
 </body></html>`)
 			return
 		}
 
-		// POST — the auto-exec call fired by the client
-		autoloadHits++
+		// POST — the boot call fired by the client
+		bootHits++
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
 		assert.Equal(t, "true", r.FormValue("jakarta.faces.partial.ajax"))
-		assert.Equal(t, "calendarForm:j_idt900", r.FormValue("jakarta.faces.source"))
+		assert.Equal(t, "entityIdForm:j_idt761", r.FormValue("jakarta.faces.source"))
 		assert.Equal(t, "cal-vs-777", r.FormValue("jakarta.faces.ViewState"))
 
-		monthsHTML := ""
-		for m := 1; m <= 12; m++ {
-			monthsHTML += fmt.Sprintf(`<div class="month-container col-xs-2"><table class="month">
-<thead><tr><th class="month-title">Mes %d</th></tr></thead>`, m)
-			if m == int(today.Month()) {
-				monthsHTML += fmt.Sprintf(`<tr><td class="day styled-day" style="background-color: rgb(210, 47, 50);"><div class="day-content">%d</div></td></tr>`, today.Day())
-			}
-			monthsHTML += `</table></div>`
-		}
+		// Events: today (bank holiday), a holiday from a previous year (must be
+		// ignored) and a personal vacation (isFestives=false, must be ignored).
+		jsonEvents := fmt.Sprintf(`[
+ {"isFestives":true,"typeAbsenceName":"Festivos nacionales","color":"#EE7744","dateAbsenceIni":"%[1]s %[2]d, %[3]d, 12:00:00 AM"},
+ {"isFestives":true,"typeAbsenceName":"Festivos por localidad","color":"#AA7777","dateAbsenceIni":"Nov 10, %[4]d, 12:00:00 AM"},
+ {"isFestives":false,"typeAbsenceName":"Vacaciones","color":"#116416","dateAbsenceIni":"%[1]s 20, %[3]d, 12:00:00 AM"}
+]`, today.Month().String(), today.Day(), today.Year(), today.Year()-1)
+		jsonEscaped := strings.NewReplacer(`"`, `&quot;`).Replace(jsonEvents)
 
 		w.Header().Set("Content-Type", "application/xml; charset=UTF-8")
 		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
 <partial-response>
 <changes>
-<update id="calendarContent"><![CDATA[
-<div class="calendar-header panel panel-default"><table><th class="year-title">%d</th></table></div>
-%s
-]]></update><update id="j_id1:jakarta.faces.ViewState:0"><![CDATA[cal-vs-778]]></update></changes>
-</partial-response>`, today.Year(), monthsHTML)
+<update id="tabView"><![CDATA[
+<div id="tabView" class="ui-tabs">
+<form id="tabView:calendarEmployeeForm"><input id="dataCalendar" type="hidden" value="%s"/></form>
+</div>
+]]></update>
+<update id="j_id1:jakarta.faces.ViewState:9"><![CDATA[cal-vs-778]]></update>
+</changes>
+</partial-response>`, jsonEscaped)
 	})
 
 	mux.HandleFunc("/home.xhtml", func(w http.ResponseWriter, r *http.Request) {
@@ -598,8 +607,8 @@ loadCalendarEmployees = function() {return PrimeFaces.ab({s:"calendarForm:j_idt9
 	clocker := clients.NewMyTeam2GoTestClocker(host, "u", "p", 0, 0, &http.Client{Jar: jar})
 
 	isHoliday := clocker.IsHoliday(context.Background())
-	assert.True(t, isHoliday, "today should be detected as a bank holiday from the auto-loaded calendar")
-	assert.Equal(t, 1, autoloadHits, "auto-exec call should be replayed exactly once")
+	assert.True(t, isHoliday, "today should be detected as a bank holiday from the dataCalendar JSON")
+	assert.Equal(t, 1, bootHits, "boot call (updateTabView) should be replayed exactly once")
 }
 
 func noHolidayHomeHTML() string {

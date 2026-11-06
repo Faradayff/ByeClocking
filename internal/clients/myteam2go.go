@@ -2,6 +2,7 @@ package clients
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -464,32 +466,55 @@ func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, target
 			"finalURL", finalURL,
 		)
 
+		// Strategy 1 (current MyTeam2Go): the page (or the browser-fired boot call)
+		// embeds the calendar events as a JSON array in <input id="dataCalendar" value="...">;
+		// the 12-month grid is rendered client-side (bootstrap-year-calendar).
+		// Bank holidays are the events flagged isFestives=true.
+		if data, err := extractDataCalendarJSON(redirHTML); err == nil {
+			if bankHolidays, perr := parseFestiveDates(data, targetYear); perr == nil {
+				slog.Info("✅ Bank holidays extracted from embedded dataCalendar JSON", "year", targetYear)
+				return bankHolidays, nil
+			} else {
+				slog.Warn("⚠️ dataCalendar JSON found but no parsable festives", "error", perr)
+			}
+		}
+
+		// Legacy: the page may carry server-rendered month tables directly.
 		if bankHolidays, err := parseCalendarEmployeeHTML(redirHTML, targetYear); err == nil {
+			slog.Info("✅ Bank holidays extracted from server-rendered month tables", "year", targetYear)
 			return bankHolidays, nil
 		}
 
-		// The initial HTML is a JSF shell: MyTeam2Go renders dynamic content with
-		// auto-executed AJAX calls (e.g. `loadX = function(){return PrimeFaces.ab({s:...,f:...,a:true,...})}`)
-		// that a browser fires on page load. Replay them and parse the returned payloads.
-		slog.Debug("🔎 No month tables in initial HTML, replaying auto-executed AJAX panels", "finalURL", finalURL)
-
-		payload, autoErr := c.fetchAutoLoadedPanels(ctx, finalURL, redirHTML)
-		if autoErr != nil {
-			slog.Warn("⚠️ Could not replay auto-executed calendar panels", "error", autoErr)
+		// Strategy 2: the page is a JSF shell and the browser fires a boot AJAX call
+		// (a:true autoExec, or a function referenced from $(document).ready) that
+		// renders the TabView containing the dataCalendar JSON. Replay it.
+		slog.Debug("🔎 No dataCalendar JSON in initial HTML, replaying page boot AJAX calls", "finalURL", finalURL)
+		payload, bootErr := c.fetchAutoLoadedPanels(ctx, finalURL, redirHTML)
+		if bootErr != nil {
+			slog.Warn("⚠️ Could not replay page boot AJAX calls", "error", bootErr)
 		}
 		if payload != "" {
+			if data, err := extractDataCalendarJSON(payload); err == nil {
+				if bankHolidays, perr := parseFestiveDates(data, targetYear); perr == nil {
+					slog.Info("✅ Bank holidays extracted from the boot-call calendar JSON", "year", targetYear)
+					return bankHolidays, nil
+				} else {
+					slog.Warn("⚠️ Boot-call dataCalendar JSON found but no parsable festives", "error", perr)
+				}
+			}
+
+			// Strategy 3 (legacy fallback): server-rendered month tables, parsed by markup.
 			if bankHolidays, err := parseCalendarEmployeeHTML(payload, targetYear); err == nil {
-				slog.Info("✅ Bank holidays extracted from auto-loaded calendar panels")
+				slog.Info("✅ Bank holidays extracted from auto-loaded calendar panels (legacy markup)")
 				return bankHolidays, nil
 			}
-			// Some months may be spread across several <update> payloads; try the combined content.
 			if bankHolidays, err := parseCalendarEmployeeHTML(redirHTML+"\n"+payload, targetYear); err == nil {
-				slog.Info("✅ Bank holidays extracted from combined calendar content")
+				slog.Info("✅ Bank holidays extracted from combined calendar content (legacy markup)")
 				return bankHolidays, nil
 			}
 		}
 
-		return nil, fmt.Errorf("could not find month tables in the calendar page (initial HTML or auto-loaded panels)")
+		return nil, fmt.Errorf("could not extract bank holidays: no dataCalendar JSON nor month tables in the calendar page (initial HTML or boot calls)")
 	}
 
 	// If no redirect tag was found, parse the response directly (e.g. if the full page or updates were returned)
@@ -497,32 +522,52 @@ func (c *MyTeam2GoClocker) fetchAndParseBankHolidays(ctx context.Context, target
 	return parseCalendarEmployeeHTML(postBody, targetYear)
 }
 
-// autoLoadCall describes a PrimeFaces auto-executed AJAX call found in the page
-// inline scripts, e.g.:
+// autoLoadCall describes a PrimeFaces.ab AJAX call that a real browser fires when
+// the page boots, declared in inline scripts as e.g.:
 //
 //	loadCalendarEmployee = function() {return PrimeFaces.ab({s:"calendarForm:j_idt900",f:"calendarForm",u:"calendarForm:yearsContent",a:true,pa:arguments[0]});}
+//
+// and either marked auto-executed (a:true) or invoked from a $(document).ready(...) block.
 type autoLoadCall struct {
 	source string
 	form   string
 	update string
 }
 
-var abAutoCallRegex = regexp.MustCompile(`=\s*function\s*\(\s*\)\s*\{\s*return\s+PrimeFaces\.ab\(\{([^}]+)\}\)`)
+// pageBootFuncRegex finds functions of the shape
+// `name = function() {return PrimeFaces.ab({...});}` allowing nested helper
+// functions (onst/onco) inside the options blob. The options end at the first `});`.
+var pageBootFuncRegex = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*=\s*function\s*\(\s*\)\s*\{\s*return\s+PrimeFaces\.ab\(\{(.+?)\}\)`)
 
-// findAutoLoadCalls extracts the PrimeFaces.ab(...) calls declared as
-// `name = function() {return PrimeFaces.ab({...});}` and only keeps those with
-// a:true (autoExecute), which are the ones a browser fires on page load.
-func findAutoLoadCalls(pageHTML string) []autoLoadCall {
+// readyBlockRegex finds `$(document).ready(function(){ ... });` boot blocks; the
+// zero-argument function calls inside them are the ones fired at page load.
+var readyBlockRegex = regexp.MustCompile(`\$\(document\)\.ready\(\s*function\s*\([^)]*\)\s*\{([^{}]{0,600}?)\}`)
+
+var zeroArgCallRegex = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*\(\s*\)`)
+
+// findPageBootCalls extracts the PrimeFaces.ab functions the browser fires on page
+// load: definitions with a:true (autoExecute) or defined functions referenced from
+// $(document).ready blocks. Results are kept in document order.
+func findPageBootCalls(pageHTML string) []autoLoadCall {
+	calledAtBoot := map[string]bool{}
+	for _, b := range readyBlockRegex.FindAllStringSubmatch(pageHTML, -1) {
+		for _, nm := range zeroArgCallRegex.FindAllStringSubmatch(b[1], -1) {
+			calledAtBoot[nm[1]] = true
+		}
+	}
+
 	var calls []autoLoadCall
-	for _, m := range abAutoCallRegex.FindAllStringSubmatch(pageHTML, -1) {
-		opts := m[1]
-		if !strings.Contains(opts, "a:true") {
+	seen := map[string]bool{}
+	for _, m := range pageBootFuncRegex.FindAllStringSubmatch(pageHTML, -1) {
+		name, opts := m[1], m[2]
+		if !strings.Contains(opts, "a:true") && !calledAtBoot[name] {
 			continue
 		}
 		source, form := extractABOpt(opts, "s"), extractABOpt(opts, "f")
-		if source == "" || form == "" {
+		if source == "" || form == "" || seen[name] {
 			continue
 		}
+		seen[name] = true
 		calls = append(calls, autoLoadCall{source: source, form: form, update: extractABOpt(opts, "u")})
 	}
 	return calls
@@ -549,15 +594,24 @@ func (c *MyTeam2GoClocker) fetchAutoLoadedPanels(ctx context.Context, pageURL, p
 	}
 	viewState := vsMatches[1]
 
-	calls := findAutoLoadCalls(pageHTML)
+	calls := findPageBootCalls(pageHTML)
 	if len(calls) == 0 {
-		return "", fmt.Errorf("no auto-executed PrimeFaces.ab calls found in calendar page")
+		return "", fmt.Errorf("no boot-fired PrimeFaces.ab calls (a:true or $(document).ready) found in calendar page")
 	}
-	slog.Debug("🤖 Auto-executed AJAX calls found", "count", len(calls))
+	slog.Debug("🤖 Page boot AJAX calls found", "count", len(calls))
 
+	// JSF rotates the ViewState after many partial requests; adopt the newest one
+	// when a response carries it (mirrors loadCalendarPanel).
+	currentVS := viewState
+	vsUpdateRegex := regexp.MustCompile(`<update id="[^"]*ViewState[^"]*"><!\[CDATA\[([^]]+)]]></update>`)
+
+	maxCalls := 4
+	if len(calls) > maxCalls {
+		calls = calls[:maxCalls]
+	}
 	var payloads []string
 	for i, call := range calls {
-		slog.Debug("🤖 Replaying auto-exec call", "source", call.source, "form", call.form, "update", call.update)
+		slog.Debug("🤖 Replaying boot call", "source", call.source, "form", call.form, "update", call.update)
 
 		render := call.update
 		if render == "" {
@@ -570,11 +624,11 @@ func (c *MyTeam2GoClocker) fetchAutoLoadedPanels(ctx context.Context, pageURL, p
 		data.Set("jakarta.faces.partial.render", render)
 		data.Set(call.source, call.source)
 		data.Set(call.form, call.form)
-		data.Set("jakarta.faces.ViewState", viewState)
+		data.Set("jakarta.faces.ViewState", currentVS)
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, pageURL, strings.NewReader(data.Encode()))
 		if err != nil {
-			return "", fmt.Errorf("failed to create auto-exec request: %w", err)
+			return "", fmt.Errorf("failed to create boot call request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 		req.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
@@ -584,20 +638,30 @@ func (c *MyTeam2GoClocker) fetchAutoLoadedPanels(ctx context.Context, pageURL, p
 
 		resp, err := c.client.Do(req)
 		if err != nil {
-			return "", fmt.Errorf("auto-exec request failed: %w", err)
+			return "", fmt.Errorf("boot call request failed: %w", err)
 		}
 
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		slog.Debug("📥 Auto-exec response received", "index", i, "length", len(body))
+		bodyStr := string(body)
+		slog.Debug("📥 Boot call response received", "index", i, "length", len(bodyStr))
 
-		payloads = append(payloads, extractUpdatePayloads(string(body))...)
+		if nv := vsUpdateRegex.FindStringSubmatch(bodyStr); len(nv) >= 2 {
+			currentVS = nv[1]
+		}
+		payloads = append(payloads, extractUpdatePayloads(bodyStr)...)
+
+		// The caller inspects payloads in order; stop firing once the calendar
+		// data (dataCalendar JSON) has appeared.
+		if strings.Contains(bodyStr, `id="dataCalendar"`) {
+			break
+		}
 
 		time.Sleep(200 * time.Millisecond)
 	}
 
 	if len(payloads) == 0 {
-		return "", fmt.Errorf("auto-exec calls returned no payloads")
+		return "", fmt.Errorf("boot calls returned no payloads")
 	}
 	return strings.Join(payloads, "\n"), nil
 }
@@ -622,9 +686,113 @@ func extractUpdatePayloads(body string) []string {
 	return out
 }
 
+// dataCalendarRegex finds the hidden input carrying the calendar events JSON.
+// In the HTML the JSON quotes appear escaped (&quot;), so the attribute value
+// never contains a raw double quote and can be matched with [^"]*.
+var dataCalendarRegex = regexp.MustCompile(`(?s)<input[^>]*id="dataCalendar"[^>]*value="([^"]*)"`)
+var dataCalendarRegexAlt = regexp.MustCompile(`(?s)<input[^>]*value="(\[&quot;[^"]*)"[^>]*id="dataCalendar"[^>]*>`)
+
+// extractDataCalendarJSON returns the unescaped JSON array of calendar events
+// embedded in the page (or in a partial-response payload).
+func extractDataCalendarJSON(body string) (string, error) {
+	if m := dataCalendarRegex.FindStringSubmatch(body); len(m) >= 2 {
+		return html.UnescapeString(m[1]), nil
+	}
+	if m := dataCalendarRegexAlt.FindStringSubmatch(body); len(m) >= 2 {
+		return html.UnescapeString(m[1]), nil
+	}
+	return "", fmt.Errorf("could not find the dataCalendar JSON input")
+}
+
+// calendarEvent is the subset of the dataCalendar JSON we need.
+type calendarEvent struct {
+	IsFestives     bool   `json:"isFestives"`
+	DateAbsenceIni string `json:"dateAbsenceIni"`
+}
+
+var portalDateRegex = regexp.MustCompile(`([A-Za-zÀ-ÿ]{2,12})\s+(\d{1,2}),\s*(\d{4})`)
+
+// portalMonthNames maps month names (English and Spanish, full or abbreviated) to
+// their numeric value. The server formats dates with the default (English) locale,
+// but both are accepted to stay robust.
+var portalMonthNames = map[string]int{
+	"jan": 1, "january": 1, "ene": 1, "enero": 1,
+	"feb": 2, "february": 2, "febrero": 2,
+	"mar": 3, "march": 3, "marzo": 3,
+	"apr": 4, "april": 4, "abr": 4, "abril": 4,
+	"may": 5, "mayo": 5,
+	"jun": 6, "june": 6, "junio": 6,
+	"jul": 7, "july": 7, "julio": 7,
+	"aug": 8, "august": 8, "ago": 8, "agosto": 8,
+	"sep": 9, "sept": 9, "september": 9, "set": 9, "septiembre": 9,
+	"oct": 10, "october": 10, "octubre": 10,
+	"nov": 11, "november": 11, "noviembre": 11,
+	"dec": 12, "december": 12, "dic": 12, "diciembre": 12,
+}
+
+// parsePortalDate parses dates like "May 15, 2026, 12:00:00 AM" (or their Spanish
+// equivalents) into a date at midnight.
+func parsePortalDate(s string) (time.Time, bool) {
+	m := portalDateRegex.FindStringSubmatch(s)
+	if m == nil {
+		return time.Time{}, false
+	}
+	month, ok := portalMonthNames[strings.ToLower(strings.TrimSpace(m[1]))]
+	if !ok {
+		return time.Time{}, false
+	}
+	var day, year int
+	if _, err := fmt.Sscanf(m[2], "%d", &day); err != nil {
+		return time.Time{}, false
+	}
+	if _, err := fmt.Sscanf(m[3], "%d", &year); err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC), true
+}
+
+// parseFestiveDates extracts the bank holidays for the target year from the
+// dataCalendar JSON: the events flagged isFestives=true (national, autonomous and
+// local holidays). Personal absences (vacaciones, permisos...) are ignored here;
+// they keep being handled by IsPersonalHoliday.
+func parseFestiveDates(rawJSON string, targetYear int) ([]time.Time, error) {
+	var events []calendarEvent
+	if err := json.Unmarshal([]byte(rawJSON), &events); err != nil {
+		return nil, fmt.Errorf("invalid dataCalendar JSON: %w", err)
+	}
+
+	loc := time.Now().Location()
+	seen := make(map[string]bool)
+	var bankHolidays []time.Time
+	for _, e := range events {
+		if !e.IsFestives {
+			continue
+		}
+		d, ok := parsePortalDate(e.DateAbsenceIni)
+		if !ok || d.Year() != targetYear {
+			continue
+		}
+		// Some festive events may use a date range; the start date is the effective day.
+		key := fmt.Sprintf("%04d-%02d-%02d", d.Year(), int(d.Month()), d.Day())
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		bankHolidays = append(bankHolidays, time.Date(targetYear, d.Month(), d.Day(), 0, 0, 0, 0, loc))
+	}
+
+	if len(bankHolidays) == 0 {
+		return nil, fmt.Errorf("no festive events (isFestives) for year %d in the calendar JSON", targetYear)
+	}
+	sort.Slice(bankHolidays, func(i, j int) bool { return bankHolidays[i].Before(bankHolidays[j]) })
+	return bankHolidays, nil
+}
+
 // parseCalendarEmployeeHTML parses the calendar HTML, verifies the active year, and extracts all bank holidays.
 // The months are processed in positional order (index 0 = January, ..., index 11 = December),
 // making it completely independent of the display language.
+// NOTE: kept as a last-resort fallback — the current MyTeam2Go version renders the
+// year grid client-side (bootstrap-year-calendar) from the dataCalendar JSON instead.
 func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error) {
 	// 1. Verify/find the active year from <th class="year-title">YYYY</th>
 	yearRegex := regexp.MustCompile(`<th class="year-title">\s*(\d{4})\s*</th>`)
@@ -673,7 +841,8 @@ func parseCalendarEmployeeHTML(html string, targetYear int) ([]time.Time, error)
 			"monthTitleCount", strings.Count(html, "month-title"),
 			"styledDayCount", strings.Count(html, "styled-day"),
 			"dayContentCount", strings.Count(html, "day-content"),
-			"autoExecCalls", len(findAutoLoadCalls(html)),
+			"pageBootCalls", len(findPageBootCalls(html)),
+			"hasDataCalendar", strings.Contains(html, `id="dataCalendar"`),
 			"hasViewState", strings.Contains(html, "jakarta.faces.ViewState"),
 		)
 
