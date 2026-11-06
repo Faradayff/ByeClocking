@@ -763,13 +763,18 @@ func parseFestiveDates(rawJSON string, targetYear int) ([]time.Time, error) {
 
 	loc := time.Now().Location()
 	seen := make(map[string]bool)
+	festiveYears := make(map[int]bool)
 	var bankHolidays []time.Time
 	for _, e := range events {
 		if !e.IsFestives {
 			continue
 		}
 		d, ok := parsePortalDate(e.DateAbsenceIni)
-		if !ok || d.Year() != targetYear {
+		if !ok {
+			continue
+		}
+		festiveYears[d.Year()] = true
+		if d.Year() != targetYear {
 			continue
 		}
 		// Some festive events may use a date range; the start date is the effective day.
@@ -782,7 +787,14 @@ func parseFestiveDates(rawJSON string, targetYear int) ([]time.Time, error) {
 	}
 
 	if len(bankHolidays) == 0 {
-		return nil, fmt.Errorf("no festive events (isFestives) for year %d in the calendar JSON", targetYear)
+		// Report the years actually present so a year-range mismatch with the
+		// portal is obvious from the log (e.g. portal only offers 2027).
+		var years []string
+		for y := range festiveYears {
+			years = append(years, fmt.Sprintf("%d", y))
+		}
+		sort.Strings(years)
+		return nil, fmt.Errorf("no festive events (isFestives) for year %d in the calendar JSON (festive years present: %s)", targetYear, strings.Join(years, ", "))
 	}
 	sort.Slice(bankHolidays, func(i, j int) bool { return bankHolidays[i].Before(bankHolidays[j]) })
 	return bankHolidays, nil
