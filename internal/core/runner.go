@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -10,11 +11,25 @@ import (
 	"github.com/Faradayff/ByeClocking/internal/config"
 )
 
+// Announce records ONE line in the normal log AND delivers that same line —
+// same level, same message — to the webhook notifier. Keeping the log and the
+// notification in a single call guarantees they are always identical.
+func Announce(ctx context.Context, notifier Notifier, level slog.Level, msg string) {
+	slog.Log(ctx, level, msg)
+	if notifier != nil {
+		notifier.Notify(ctx, level, msg)
+	}
+}
+
 // Run is the main application loop that orchestrates the clocking actions throughout the day.
-func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
+func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker, notifier Notifier) {
+	if notifier == nil {
+		notifier = NoopNotifier{}
+	}
+
 	for {
 		if now := nowFunc().Weekday(); now == time.Saturday || now == time.Sunday {
-			slog.Info("🏖️ Today is weekend, skipping clocking")
+			Announce(ctx, notifier, slog.LevelInfo, "🏖️ Today is weekend, skipping clocking")
 			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
 				break
 			}
@@ -22,7 +37,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		}
 
 		// Check connectivity before querying holiday status.
-		if ok := checkConnectivity(ctx, "holiday check"); !ok {
+		if ok := checkConnectivity(ctx, "holiday check", notifier); !ok {
 			if ctx.Err() != nil {
 				break
 			}
@@ -30,7 +45,7 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		}
 
 		if clocker.IsHoliday(ctx) {
-			slog.Info("🎉 Today is holiday, skipping clocking")
+			Announce(ctx, notifier, slog.LevelInfo, "🎉 Today is holiday, skipping clocking")
 			if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
 				break
 			}
@@ -40,13 +55,14 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 		slog.Info("🌅 Starting the day")
 		clockInTime, lunchTime, lunchFinishTime, clockOutTime, hasLunch := randomizeHours(cfg)
 
+		// --- Clock in ---
 		slog.Debug("🔐 Waiting to clock in")
 		if toClock, err := waitUntil(ctx, clockInTime); err != nil {
 			break
-		} else if toClock {
-			slog.Info("✅ Clock in time")
-			// Check connectivity before clocking in.
-			if ok := checkConnectivity(ctx, "clock in"); !ok {
+		} else if !toClock {
+			Announce(ctx, notifier, slog.LevelWarn, "⏭️ Skipped clock in (missed event)")
+		} else {
+			if ok := checkConnectivity(ctx, "clock in", notifier); !ok {
 				if ctx.Err() != nil {
 					break
 				}
@@ -56,21 +72,21 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				continue
 			}
 			if err := clocker.ClockIn(ctx); err != nil {
-				slog.Error("❌ Failed to clock in", "error", err)
+				Announce(ctx, notifier, slog.LevelError, "❌ Failed to clock in: "+err.Error())
 				break
 			}
-		} else {
-			slog.Info("⏭️ Skipped clock in (missed event)")
+			Announce(ctx, notifier, slog.LevelInfo, "✅ Clock in time")
 		}
 
+		// --- Lunch break ---
 		if hasLunch {
 			slog.Debug("🍴 Waiting to go to lunch")
 			if toClock, err := waitUntil(ctx, lunchTime); err != nil {
 				break
-			} else if toClock {
-				slog.Info("⏸️ Lunch time")
-				// Check connectivity before clocking pause.
-				if ok := checkConnectivity(ctx, "lunch pause"); !ok {
+			} else if !toClock {
+				Announce(ctx, notifier, slog.LevelWarn, "⏭️ Skipped lunch time (missed event)")
+			} else {
+				if ok := checkConnectivity(ctx, "lunch pause", notifier); !ok {
 					if ctx.Err() != nil {
 						break
 					}
@@ -80,20 +96,19 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 					continue
 				}
 				if err := clocker.ClockPause(ctx); err != nil {
-					slog.Error("❌ Error when clocking pause for lunch", "error", err)
+					Announce(ctx, notifier, slog.LevelError, "❌ Error when clocking pause for lunch: "+err.Error())
 					break
 				}
-			} else {
-				slog.Info("⏭️ Skipped lunch time (missed event)")
+				Announce(ctx, notifier, slog.LevelInfo, "⏸️ Lunch time")
 			}
 
 			slog.Debug("🍽️ Waiting to go back from lunch")
 			if toClock, err := waitUntil(ctx, lunchFinishTime); err != nil {
 				break
-			} else if toClock {
-				slog.Info("▶️ Back from lunch time")
-				// Check connectivity before clocking resume.
-				if ok := checkConnectivity(ctx, "lunch resume"); !ok {
+			} else if !toClock {
+				Announce(ctx, notifier, slog.LevelWarn, "⏭️ Skipped back from lunch time (missed event)")
+			} else {
+				if ok := checkConnectivity(ctx, "lunch resume", notifier); !ok {
 					if ctx.Err() != nil {
 						break
 					}
@@ -103,23 +118,23 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 					continue
 				}
 				if err := clocker.ClockResume(ctx); err != nil {
-					slog.Error("❌ Error when clocking resume", "error", err)
+					Announce(ctx, notifier, slog.LevelError, "❌ Error when clocking resume: "+err.Error())
 					break
 				}
-			} else {
-				slog.Info("⏭️ Skipped back from lunch time (missed event)")
+				Announce(ctx, notifier, slog.LevelInfo, "▶️ Back from lunch time")
 			}
 		} else {
 			slog.Info("🎉 No lunch today. Skipping lunch break")
 		}
 
+		// --- Clock out ---
 		slog.Debug("🔐 Waiting to clock out")
 		if toClock, err := waitUntil(ctx, clockOutTime); err != nil {
 			break
-		} else if toClock {
-			slog.Info("🏁 Clock out time")
-			// Check connectivity before clocking out.
-			if ok := checkConnectivity(ctx, "clock out"); !ok {
+		} else if !toClock {
+			Announce(ctx, notifier, slog.LevelWarn, "⏭️ Skipped clock out (missed event)")
+		} else {
+			if ok := checkConnectivity(ctx, "clock out", notifier); !ok {
 				if ctx.Err() != nil {
 					break
 				}
@@ -129,11 +144,10 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 				continue
 			}
 			if err := clocker.ClockOut(ctx); err != nil {
-				slog.Error("❌ Error when clocking out", "error", err)
+				Announce(ctx, notifier, slog.LevelError, "❌ Error when clocking out: "+err.Error())
 				break
 			}
-		} else {
-			slog.Info("⏭️ Skipped clock out (missed event)")
+			Announce(ctx, notifier, slog.LevelInfo, "🏁 Clock out time")
 		}
 
 		if err := waitUntilTomorrow(ctx, cfg.ClockIn.Time); err != nil {
@@ -146,17 +160,15 @@ func Run(ctx context.Context, cfg *config.Config, clocker clients.Clocker) {
 // It retries for up to ConnectivityMaxWait, logging warnings on each attempt.
 // Returns true if connectivity is confirmed, false if the timeout was exceeded
 // or the context was canceled (check ctx.Err() to distinguish the two).
-func checkConnectivity(ctx context.Context, operation string) bool {
+func checkConnectivity(ctx context.Context, operation string, notifier Notifier) bool {
 	slog.Debug("🌐 Checking internet connectivity", "operation", operation)
-	err := WaitForConnectivity(ctx, ConnectivityMaxWait)
+	err := waitForConnectivity(ctx, ConnectivityMaxWait)
 	if err == nil {
 		return true
 	}
 	if errors.Is(err, ErrConnectivityTimeout) {
-		slog.Error("❌ No internet connectivity after maximum wait time. Skipping to next day",
-			"operation", operation,
-			"maxWait", ConnectivityMaxWait,
-		)
+		Announce(ctx, notifier, slog.LevelError,
+			fmt.Sprintf("❌ No internet connectivity before %q. Skipping to next day.", operation))
 	}
 	// ctx canceled or timeout — caller checks ctx.Err() to decide whether to break.
 	return false

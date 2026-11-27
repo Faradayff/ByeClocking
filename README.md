@@ -130,6 +130,8 @@ file in the same directory as your `docker-compose.yml`.
 
 - `TZ`: Defines the time zone of the container (e.g., `Europe/Madrid`). It is crucial to set this correctly so the
   clock-in times align with your local time.
+- `LOG_LEVEL`: Log level for the file/stdout log — `DEBUG`, `INFO`, `WARN` or `ERROR` (default `INFO`). The
+  `-loglevel` CLI flag, when provided, still takes precedence.
 
 **Important:** The required environment variables depend entirely on the clocking platform (client) you are using.
 
@@ -142,6 +144,54 @@ file in the same directory as your `docker-compose.yml`.
 - `BYECLOCKING_COMPANY_NAME=your_company`
 
 *(Note: If new platforms are added in the future, they will specify their own required environment variables here).*
+
+#### Webhook notifications (optional)
+
+ByeClocking can also **push events to a webhook**: point it at any endpoint that accepts an HTTP POST (a
+notification hub, an alert service, anything). It is optional — with `WEBHOOK_URL` empty nothing is sent.
+
+The webhook has its **own severity filter, independent of `LOG_LEVEL`**: `LOG_LEVEL` drives the log file/stdout,
+`WEBHOOK_LEVEL` drives what is pushed. By default only `WARN` and above are sent, so a chat room only receives
+failures and "missed events", while the full log keeps living in `./logs/`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WEBHOOK_URL` | *(empty ⇒ disabled)* | Full endpoint URL, token path included. e.g. `http://your-hub:8080/h/<token>` |
+| `WEBHOOK_LEVEL` | `WARN` | Minimum severity to push: `DEBUG` / `INFO` / `WARN` / `ERROR` |
+| `WEBHOOK_TITLE` | `ByeClocking` | Title of every message |
+| `WEBHOOK_TITLE_FIELD` | `title` | Name of the JSON field that carries the title (adapts to other integrations) |
+| `WEBHOOK_TEXT_FIELD` | `text` | Name of the JSON field that carries the message body |
+| `WEBHOOK_HEADERS` | — | Extra headers as `Key: Value; Key2: Value2` (e.g. `Authorization: Bearer …`) |
+| `WEBHOOK_TIMEOUT` | `10s` | Per-attempt HTTP timeout |
+| `WEBHOOK_RETRY_MAX` | `3` | Retries on transient failures (`5xx`, `429`, timeout). `0` disables retries |
+| `WEBHOOK_RETRY_BACKOFF` | `2s` | Initial backoff (doubles per retry, capped at 30s) |
+
+Event severities: a clock action (clock in / lunch pause / lunch resume / clock out) and a holiday or weekend skip
+are `INFO`; a "missed event" (window already closed) is `WARN`; a failed action, a no-connectivity timeout and a
+startup failure are `ERROR`. A notification that cannot be delivered is **logged and swallowed** — it never
+interrupts the clocking flow.
+
+**Example: a notification hub on the same Docker host.** The `docker-compose.yml` is neutral and works without any
+webhook. To reach the hub from this host, either attach `byeclocking` to the network the hub lives on (attach any
+external network the way the compose file shows) or simply use the hub's reachable LAN address — then point
+`WEBHOOK_URL` at the hub's endpoint:
+
+```env
+WEBHOOK_URL=http://your-hub:8080/h/<TOKEN>
+WEBHOOK_LEVEL=WARN
+```
+
+**Example: a different endpoint shape.** If your endpoint expects different JSON field names and a bearer token,
+adapt the field names and headers:
+
+```env
+WEBHOOK_URL=https://alerts.example.com/hooks/xyz
+WEBHOOK_TITLE=ByeClocking
+WEBHOOK_TITLE_FIELD=name
+WEBHOOK_TEXT_FIELD=content
+WEBHOOK_HEADERS=Authorization: Bearer secret-token
+WEBHOOK_LEVEL=INFO
+```
 
 ### Viewing the logs
 

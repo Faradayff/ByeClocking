@@ -26,6 +26,10 @@ const (
 // be established within the allowed maximum wait time.
 var ErrConnectivityTimeout = errors.New("internet connectivity could not be established within the timeout")
 
+// waitForConnectivity is a seam for the connectivity dependency. It defaults to the
+// real WaitForConnectivity and can be overridden in tests.
+var waitForConnectivity = WaitForConnectivity
+
 // WaitForConnectivity blocks until internet connectivity is confirmed by successfully
 // resolving a well-known hostname, or until maxWait is exceeded.
 // It logs a warning on each failed retry.
