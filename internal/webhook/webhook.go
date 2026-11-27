@@ -235,7 +235,11 @@ func (c *Client) doOnce(ctx context.Context, payload []byte) (int, string, error
 	if err != nil {
 		return 0, "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("Webhook: failed to close response body", "error", closeErr)
+		}
+	}()
 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	return resp.StatusCode, string(data), nil
