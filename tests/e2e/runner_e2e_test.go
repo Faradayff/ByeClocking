@@ -4,6 +4,8 @@ package e2e
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,13 +80,40 @@ func pastClockTime(d time.Duration) config.ClockTime {
 }
 
 // runnerDone runs core.Run in a goroutine and returns a channel that closes when Run exits.
+// A nil notifier is passed so existing tests are unaffected by the notification feature.
 func runnerDone(ctx context.Context, cfg *config.Config, clocker clients.Clocker) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		core.Run(ctx, cfg, clocker)
+		core.Run(ctx, cfg, clocker, nil)
 	}()
 	return done
+}
+
+// recorderNotifier captures every notification so tests can assert on the
+// events the runner emitted and their severities.
+type recorderNotifier struct {
+	mu       sync.Mutex
+	messages []recordedEvent
+}
+
+type recordedEvent struct {
+	level   slog.Level
+	message string
+}
+
+func (r *recorderNotifier) Notify(_ context.Context, level slog.Level, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages = append(r.messages, recordedEvent{level: level, message: message})
+}
+
+func (r *recorderNotifier) events() []recordedEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]recordedEvent, len(r.messages))
+	copy(result, r.messages)
+	return result
 }
 
 // waitForCalls blocks until the mock has recorded at least n calls, or the timeout expires.
@@ -310,4 +339,83 @@ func TestRunner_ClockInError(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("runner did not exit after ClockIn error")
 	}
+}
+
+// TestRunner_Notifications verifies that, for a normal weekday (Mon–Thu), the
+// runner emits one success notification per action and that each is at the
+// expected severity. Failures and skipped/holiday/weekend events are covered by
+// their own dedicated paths elsewhere.
+func TestRunner_Notifications(t *testing.T) {
+	now := time.Now().Weekday()
+	if now == time.Saturday || now == time.Sunday || now == time.Friday {
+		t.Skip("TestRunner_Notifications requires a Mon–Thu run; skipping")
+	}
+
+	mock := newMockClocker()
+	rec := &recorderNotifier{}
+	cfg := baseCfg()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		core.Run(ctx, cfg, mock, rec)
+	}()
+
+	ok := waitForCalls(t, mock, 4, 5*time.Second)
+	cancel()
+	<-done
+
+	assert.True(t, ok, "runner should have recorded 4 clock actions within timeout")
+
+	var info []string
+	for _, e := range rec.events() {
+		if e.level == slog.LevelInfo {
+			info = append(info, e.message)
+		}
+	}
+	assert.Len(t, info, 4, "expected 4 INFO success notifications, got %d: %v", len(info), info)
+	combined := strings.Join(info, "\n")
+	// These must be the SAME strings the normal log writes (unified one-line-per-event).
+	for _, want := range []string{"✅ Clock in time", "⏸️ Lunch time", "▶️ Back from lunch time", "🏁 Clock out time"} {
+		assert.Contains(t, combined, want, "INFO notifications should match the log line %q", want)
+	}
+}
+
+// TestRunner_NotificationsError verifies that a failing action produces an
+// ERROR-level notification that includes the failure.
+func TestRunner_NotificationsError(t *testing.T) {
+	now := time.Now().Weekday()
+	if now == time.Saturday || now == time.Sunday || now == time.Friday {
+		t.Skip("TestRunner_NotificationsError requires a Mon–Thu run; skipping")
+	}
+
+	mock := newMockClocker()
+	mock.errors["ClockIn"] = assert.AnError
+	rec := &recorderNotifier{}
+	cfg := baseCfg()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		core.Run(ctx, cfg, mock, rec)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("runner did not exit after ClockIn error")
+	}
+
+	var errs []string
+	for _, e := range rec.events() {
+		if e.level == slog.LevelError {
+			errs = append(errs, e.message)
+		}
+	}
+	assert.Len(t, errs, 1, "expected exactly 1 ERROR notification, got %v", errs)
+	assert.Contains(t, errs[0], "Failed to clock in", "ERROR notification should mention the failure")
 }
