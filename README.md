@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="logo.png" alt="ByeClocking Logo" width="200"/>
+</div>
+
 # ByeClocking
 
 ByeClocking is a Go application designed to automate clock-ins and clock-outs at work by naturally simulating human

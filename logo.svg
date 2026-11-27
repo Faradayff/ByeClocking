@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ByeClocking logo">
+  <title>ByeClocking</title>
+
+  <!-- Rounded-square background (warm coral) -->
+  <rect x="0" y="0" width="512" height="512" rx="118" ry="118" fill="#FF6B4A"/>
+
+  <!-- Clock face -->
+  <circle cx="240" cy="272" r="150" fill="#FFF7F0" stroke="#2E2A2B" stroke-width="14"/>
+
+  <!-- Clock hands (10:10) -->
+  <g stroke="#2E2A2B" stroke-width="22" stroke-linecap="round">
+    <line x1="240" y1="272" x2="333.5" y2="218"/>
+    <line x1="240" y1="272" x2="176" y2="235"/>
+  </g>
+  <circle cx="240" cy="272" r="15" fill="#2E2A2B"/>
+
+  <!-- Waving hand (top-right, waving goodbye) -->
+  <g transform="translate(392 148) rotate(-14)" fill="#2E2A2B">
+    <!-- thumb -->
+    <rect x="-62" y="2" width="20" height="44" rx="10" transform="rotate(-32 -52 24)"/>
+    <!-- fingers -->
+    <rect x="-45" y="-62" width="20" height="60" rx="10"/>
+    <rect x="-21" y="-62" width="20" height="60" rx="10"/>
+    <rect x="3"   y="-62" width="20" height="60" rx="10"/>
+    <rect x="27"  y="-62" width="20" height="60" rx="10"/>
+    <!-- palm -->
+    <rect x="-47" y="-8" width="94" height="64" rx="27"/>
+  </g>
+</svg>
